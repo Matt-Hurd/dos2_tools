@@ -522,7 +522,7 @@ def main():
         with open(f, 'r', encoding='utf-8', errors='replace') as file_obj:
             parser.load_data(file_obj.read())
 
-    target = "RC_DW_Trader_EquipmentRangerWarrior"
+    target = "FTJ_Skillbook_WaterTrainer"
     
     root = parser.build_loot_tree(target, level=13)
     

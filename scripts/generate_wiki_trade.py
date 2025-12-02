@@ -8,14 +8,12 @@ from copy import deepcopy
 from dos2_tools.core.config import get_config
 from dos2_tools.core.file_system import resolve_load_order, get_files_by_pattern
 from dos2_tools.core.parsers import parse_lsj_templates, parse_stats_txt
-from dos2_tools.core.localization import load_localization_data
+from dos2_tools.core.localization import load_localization_data, get_localized_text
 from dos2_tools.core.stats_engine import resolve_all_stats
+from dos2_tools.core.formatters import sanitize_filename
 
-# --- CONSTANTS ---
 EXTERNAL_TABLES = ["ST_AllPotions", "ST_Ingredients", "ST_RareIngredient", "ST_Trader_WeaponNormal", "ST_Trader_ArmorNormal", "ST_Trader_ClothArmor"]
 MAX_SIMULATION_LEVEL = 16 
-
-# --- DATA CLASSES ---
 
 class StatsManager:
     def __init__(self, all_stats):
@@ -55,7 +53,7 @@ class LootNode:
         self.min_qty = min_qty
         self.max_qty = max_qty
         self.children = []
-        self.items = [] # For category items
+        self.items = []
 
     def add_child(self, node):
         self.children.append(node)
@@ -206,13 +204,13 @@ class TreasureParser:
                     return pool.children[0]
         return node
 
-# --- WIKI EXPORTER ---
-
 class OSRSWikiExporter:
-    def __init__(self):
+    def __init__(self, loc_map, uuid_map):
         self.uid_counter = 0
         self.seen_identifiers = set() 
         self.has_rendered_gold = False 
+        self.loc_map = loc_map
+        self.uuid_map = uuid_map
 
     def get_uid(self):
         self.uid_counter += 1
@@ -222,6 +220,19 @@ class OSRSWikiExporter:
         text = text.replace("ST_", "").replace("I_", "")
         text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
         return text.replace("_", " ").strip()
+
+    def resolve_name_link(self, raw_name):
+        clean_internal = raw_name
+        if clean_internal.startswith("I_"):
+            clean_internal = clean_internal[2:]
+
+        loc_text = get_localized_text(clean_internal, self.uuid_map, self.loc_map)
+
+        if loc_text:
+            safe_name = sanitize_filename(loc_text)
+            return f"[[{safe_name}]]"
+
+        return self.clean_label(raw_name)
 
     def get_qty_display(self, node, override=None):
         min_q = node.min_qty if override is None else override
@@ -325,25 +336,20 @@ class OSRSWikiExporter:
         chance = f"{pool.chance:.1%}" if pool.chance < 0.99 else "Always Available"
         
         out = []
-        # Updated to use template
         out.append(f"{{{{TradePoolHead|name=Selection Pool (Selects {qty})|chance={chance}}}}}")
         out.extend(new_children)
         out.append("{{TradeTableBottom}}")
         return "\n".join(out)
 
     def render_deep_container(self, node):
-        """
-        Builds a list of {{TradeNestedLine}} template calls.
-        Wraps them in {{TradeNestedContainer}}.
-        Returns empty string if no new items found.
-        """
         lines = []
         
         if node.type == "Category" and node.items:
              for i in node.items:
                  if i['name'] not in self.seen_identifiers:
                      self.seen_identifiers.add(i['name'])
-                     lines.append(f"{{{{TradeNestedLine|name=[[{i['name']}]]|quantity=1|rarity={i['rel']:.1%}}}}}")
+                     display_name = self.resolve_name_link(i['name'])
+                     lines.append(f"{{{{TradeNestedLine|name={display_name}|quantity=1|rarity={i['rel']:.1%}}}}}")
                  
         elif node.type in ["Table", "Table_Cycle"] and node.children:
             for pool in node.children:
@@ -355,8 +361,12 @@ class OSRSWikiExporter:
                     self.seen_identifiers.add(kid.name)
                     
                     k_name = self.clean_label(kid.name)
-                    if kid.type == "Link": k_name = f"[[{kid.name}]]"
-                    if kid.type in ["Table", "Category"]:
+
+                    if kid.type == "Item":
+                        k_name = self.resolve_name_link(kid.name)
+                    elif kid.type == "Link":
+                        k_name = f"[[{kid.name}]]"
+                    elif kid.type in ["Table", "Category"]:
                          k_name = f"'''{k_name}''' (Group)"
                     
                     k_qty = self.get_qty_display(kid, pool.min_qty if p_push else None)
@@ -374,25 +384,30 @@ class OSRSWikiExporter:
             self.seen_identifiers.add(node.name)
 
         name = self.clean_label(node.name)
+
+        if node.type == "Item":
+            name = self.resolve_name_link(node.name)
+        elif node.type == "Link":
+            name = f"[[{node.name}]]"
+
         qty = self.get_qty_display(node, qty_override)
         rarity = force_rarity if force_rarity else f"{node.chance:.1%}"
         if node.chance > 0.99: rarity = "100%"
         
         children_to_render = []
         
-        # 1. Category Expansion
         if node.type == "Category" and node.items:
             for i in node.items:
                 if i['name'] not in self.seen_identifiers:
                     self.seen_identifiers.add(i['name'])
+                    display_name = self.resolve_name_link(i['name'])
                     children_to_render.append({
-                        'name': f"[[{i['name']}]]", 
+                        'name': display_name, 
                         'qty': '1', 
                         'rar': f"{i['rel']:.1%}"
                     })
             name = f"<span style='color:#a87b00; font-weight:bold;'>[CAT]</span> {name}"
 
-        # 2. Sub-Table Expansion
         elif node.type in ["Table", "Table_Cycle"] and node.children:
             for pool in node.children:
                 p_is_g = pool.chance >= 0.99
@@ -401,23 +416,23 @@ class OSRSWikiExporter:
                 for kid in sorted(pool.children, key=lambda x:x.chance, reverse=True):
                     
                     if kid.type in ["Table", "Table_Cycle", "Category"]:
-                         # Deep Nesting: Returns template string {{TradeNestedContainer...}}
                          deep_tmpl = self.render_deep_container(kid)
                          if deep_tmpl:
                              children_to_render.append({'name': deep_tmpl, 'qty': '1', 'rar': f"{kid.chance:.1%}"})
                     else:
-                        # Standard Item
                         if kid.name not in self.seen_identifiers:
                             self.seen_identifiers.add(kid.name)
                             k_name = self.clean_label(kid.name)
-                            if kid.type == "Link": k_name = f"[[{kid.name}]]"
+
+                            if kid.type == "Item":
+                                k_name = self.resolve_name_link(kid.name)
+                            elif kid.type == "Link":
+                                k_name = f"[[{kid.name}]]"
+
                             k_qty = self.get_qty_display(kid, pool.min_qty if p_push else None)
                             children_to_render.append({'name': k_name, 'qty': k_qty, 'rar': f"{kid.chance:.1%}"})
             
             name = f"'''{name}'''"
-
-        elif node.type == "Link":
-            name = f"[[{node.name}]]"
 
         if (node.type in ["Category", "Table", "Table_Cycle"]) and not children_to_render:
             return None
@@ -431,8 +446,6 @@ class OSRSWikiExporter:
             for c in children_to_render:
                 out.append(f"{{{{TradeRowChild|id={uid}|name={c['name']}|quantity={c['qty']}|rarity={c['rar']}}}}}")
             return "\n".join(out)
-
-# --- MAIN ---
 
 def find_npc_trade_id(npc_name, all_files, conf, loc_map, uuid_map):
     char_files = get_files_by_pattern(all_files, conf['patterns']['level_characters'])
@@ -450,11 +463,7 @@ def find_npc_trade_id(npc_name, all_files, conf, loc_map, uuid_map):
                 if h: final = loc_map.get(h, v)
                 elif v: final = v
             if final and npc_name.lower() in final.lower():
-                trade = data.get("TradeTreasures", [])
-                if isinstance(trade, list):
-                    for t in trade:
-                        val = t.get("TreasureItem", {}).get("value")
-                        if val and val!="Empty": found.append(val)
+                found.extend(data.get("TradeTreasures", []))
     return list(set(found))
 
 def main():
@@ -480,20 +489,29 @@ def main():
         with open(f,'r',encoding='utf-8',errors='replace') as fo: tp.load_data(fo.read())
         
     ids = find_npc_trade_id(args.npc_name, all_files, conf, loc['handles'], loc['uuids'])
-    if not ids: return print("No trade ID found.")
+    valid_ids = sorted(list(set([x for x in ids if x])))
+
+    if not valid_ids:
+        print("No trade ID found.")
+        return
     
-    print(f"Generating for {ids[0]} across {MAX_SIMULATION_LEVEL} levels...")
-    
-    exporter = OSRSWikiExporter()
+    print(f"Generating merged table for {valid_ids}...")
+    exporter = OSRSWikiExporter(loc['handles'], loc['uuids'])
     final_wikitext = []
-    
+
     for lvl in range(1, MAX_SIMULATION_LEVEL + 1):
-        root = tp.build_loot_tree(ids[0], lvl)
-        opt_root = tp.flatten_wrappers(root)
-        block = exporter.render_level_block(opt_root, lvl)
+        master_node = LootNode("Master_Merged", "Table")
+
+        for trade_id in valid_ids:
+            root = tp.build_loot_tree(trade_id, lvl)
+            if root:
+                opt_root = tp.flatten_wrappers(root)
+                master_node.children.extend(opt_root.children)
+
+        block = exporter.render_level_block(master_node, lvl)
         if block:
             final_wikitext.append(block)
-            print(f"  > Found new items at Level {lvl}")
+            print(f" > Generated Level {lvl} (Merged)")
 
     full_text = "\n\n".join(final_wikitext)
     fname = f"{args.npc_name.replace(' ','_')}_Trade.wikitext"

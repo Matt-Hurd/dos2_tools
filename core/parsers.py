@@ -162,6 +162,22 @@ def parse_lsj_templates(filepath):
         
         description = go.get("Description")
         display_name = go.get("DisplayName")
+        trade_treasures = go.get("TradeTreasures")
+        tts = []
+        if trade_treasures:
+            for tt in trade_treasures:
+                ttem = tt.get("TreasureItem")
+                if ttem:
+                    tts.append(ttem.get("value"))
+
+        treasures = go.get("Treasures")
+        ts = []
+        if treasures:
+            for t in treasures:
+                tem = t.get("TreasureItem")
+                if tem:
+                    ts.append(tem.get("value"))
+
         icon = go.get("Icon", {}).get("value")
 
         if "attribute" in go:
@@ -183,7 +199,9 @@ def parse_lsj_templates(filepath):
             "Stats": stats_id,
             "Description": description,
             "DisplayName": display_name,
-            "Icon": icon
+            "Icon": icon,
+            "TradeTreasures": tts,
+            "Treasures": ts
         }
 
         peace_actions = go.get("OnUsePeaceActions")
