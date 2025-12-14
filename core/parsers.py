@@ -159,6 +159,8 @@ def parse_lsj_templates(filepath):
     for go in game_objects:
         map_key = go.get("MapKey", {}).get("value")
         stats_id = go.get("Stats", {}).get("value")
+        skill_list = go.get("SkillList", [])
+        template_name = go.get("TemplateName", {}).get("value")
         
         description = go.get("Description")
         display_name = go.get("DisplayName")
@@ -194,15 +196,31 @@ def parse_lsj_templates(filepath):
         if not map_key and not stats_id:
             continue
 
-        final_obj = {
-            "MapKey": map_key, 
-            "Stats": stats_id,
-            "Description": description,
-            "DisplayName": display_name,
-            "Icon": icon,
-            "TradeTreasures": tts,
-            "Treasures": ts
-        }
+        final_obj = {}
+        if map_key:
+            final_obj["MapKey"] = map_key
+        if stats_id:
+            final_obj["Stats"] = stats_id
+        if description:
+            final_obj["Description"] = description
+        if display_name:
+            final_obj["DisplayName"] = display_name
+        if icon:
+            final_obj["Icon"] = icon
+        if tts:
+            final_obj["TradeTreasures"] = tts
+        if ts:
+            final_obj["Treasures"] = ts
+        if skill_list:
+            final_obj["SkillList"] = skill_list
+        if template_name:
+            final_obj["TemplateName"] = template_name
+        if go.get("LevelOverride"):
+            final_obj["LevelOverride"] = go.get("LevelOverride")
+        if go.get("Transform"):
+            final_obj["Transform"] = go.get("Transform")
+        if go.get("Tags"):
+            final_obj["Tags"] = go.get("Tags")
 
         peace_actions = go.get("OnUsePeaceActions")
         if peace_actions:

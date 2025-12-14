@@ -10,10 +10,9 @@ from dos2_tools.core.localization import load_localization_data, get_localized_t
 from dos2_tools.core.formatters import sanitize_filename
 from dos2_tools.core.stats_engine import resolve_all_stats
 
-# Fields from Character.txt to export
 STAT_FIELDS = [
     "Strength", "Finesse", "Intelligence", "Constitution", "Memory", "Wits",
-    "Vitality", "MagicPoints", "Armor", "MagicArmor", # Note: 'Armor' is phys in some files
+    "Vitality", "MagicPoints", "Armor", "MagicArmor",
     "APMaximum", "APStart", "APRecovery",
     "FireResistance", "EarthResistance", "WaterResistance", "AirResistance", 
     "PoisonResistance", "PhysicalResistance", "PiercingResistance",
@@ -61,6 +60,9 @@ def parse_skills(skill_list_node):
             if skill.get("TacticianHardcore", {}).get("value") is True: modes.append("Tactician")
             if skill.get("HonorHardcore", {}).get("value") is True: modes.append("Honor")
             
+            if len(modes) == 4:
+                modes = []
+            
             source_cond = parse_conditions(skill.get("SourceConditions", []))
             target_cond = parse_conditions(skill.get("TargetConditions", []))
             
@@ -96,19 +98,13 @@ def parse_tags(data):
     return "; ".join(sorted(list(set(tags))))
 
 def parse_trade_treasures(data):
-    tables = []
     tt_root = data.get("TradeTreasures", [])
     if not isinstance(tt_root, list): return ""
-    
-    for entry in tt_root:
-        val = entry.get("TreasureItem", {}).get("value")
-        if val and val != "Empty":
-            tables.append(val)
-            
-    return "; ".join(tables)
+
+    return "; ".join(tt_root)
 
 def get_variant_signature(data):
-    stats = data.get("Stats", {}).get("value", "Unknown")
+    stats = data.get("Stats") or "Unknown"
     level = data.get("LevelOverride", {}).get("value", 0)
     
     equip = "None"
@@ -121,8 +117,7 @@ def get_variant_signature(data):
     loot = "None"
     treasures = data.get("Treasures", [])
     if treasures and isinstance(treasures, list):
-         for t in treasures:
-             val = t.get("TreasureItem", {}).get("value")
+         for val in treasures:
              if val and val != "Empty":
                  loot = val
                  break
@@ -183,12 +178,8 @@ def main():
     loc_map = loc_data['handles']
     uuid_map = loc_data['uuids']
 
-    # --- NEW: Load and Resolve Character Stats ---
     print("Loading Character Stats...")
-    # Add Character.txt pattern if not present in config, or assume it's under stats pattern
-    # The config has "stats": ["Stats/Generated/Data/*.txt"...] which covers Character.txt
     stats_files = get_files_by_pattern(all_files, conf['patterns']['stats'])
-    # Filter only Character.txt to avoid processing unrelated stats
     char_stats_files = [f for f in stats_files if f.endswith("Character.txt")]
     
     raw_stats = {}
@@ -197,7 +188,6 @@ def main():
     
     resolved_stats = resolve_all_stats(raw_stats)
     print(f"Resolved {len(resolved_stats)} character stat entries.")
-    # ---------------------------------------------
 
     print("Loading Templates...")
     template_files = get_files_by_pattern(all_files, conf['patterns']['root_templates_lsj'])
@@ -223,7 +213,7 @@ def main():
             region_name = parts[parts.index("Globals")+1] if "Globals" in parts else "Unknown"
 
         for obj_uuid, level_data in level_objects.items():
-            template_uuid = level_data.get("TemplateName", {}).get("value")
+            template_uuid = level_data.get("TemplateName")
             final_data = {}
             if template_uuid and template_uuid in root_templates:
                 final_data = deepcopy(root_templates[template_uuid])
@@ -259,30 +249,27 @@ def main():
         
         output_lines = ["{{InfoboxNPC", f"| name = {name}", "}}"]
         
+        output_lines.append("<div style=\"display:none;\">")
         for sig, var_instances in variants.items():
             label = generate_variant_label(sig, all_sigs)
             primary = var_instances[0]
             
-            stats_id = primary.get("Stats", {}).get("value", "")
+            stats_id = primary.get("Stats", "Unknown")
             level = primary.get("LevelOverride", {}).get("value", "")
             
-            # --- UPDATED COORDINATES FORMAT ---
             coords = []
             for v in var_instances:
                 transform = v.get("Transform")
                 if isinstance(transform, list) and transform:
                     pos = transform[0].get("Position", {}).get("value", "")
-                    # Format: x,y,z,Region (Machine Readable)
                     if pos: 
                         clean_pos = pos.replace(" ", ",")
                         coords.append(f"{clean_pos},{v.get('_REGION')}")
-            # ----------------------------------
 
             loot_table = "None"
             treasures = primary.get("Treasures", [])
             if treasures and isinstance(treasures, list):
-                for t in treasures:
-                    val = t.get("TreasureItem", {}).get("value")
+                for val in treasures:
                     if val and val != "Empty":
                         loot_table = val
                         break
@@ -293,22 +280,18 @@ def main():
             output_lines.append("")
             output_lines.append("{{NPC Variant")
             output_lines.append(f"| label = {label}")
-            output_lines.append(f"| guid = {primary.get('MapKey', {}).get('value', '')}")
+            output_lines.append(f"| guid = {primary.get('MapKey', '')}")
             output_lines.append(f"| stats_id = {stats_id}")
             output_lines.append(f"| level = {level}")
-            output_lines.append(f"| icon = {primary.get('Icon', {}).get('value', '')}")
+            output_lines.append(f"| icon = {primary.get('Icon', '')}")
             
-            # --- NEW: Inject Resolved Stats ---
             if stats_id in resolved_stats:
                 stat_block = resolved_stats[stats_id]
                 for field in STAT_FIELDS:
-                    # Check snake_case and PascalCase variants in stat block
                     val = stat_block.get(field) or stat_block.get(field.replace(" ", ""))
                     if val:
-                        # Convert to snake_case for template param
                         param_name = re.sub(r'(?<!^)(?=[A-Z])', '_', field).lower()
                         output_lines.append(f"| {param_name} = {val}")
-            # ----------------------------------
 
             output_lines.append(f"| treasure_id = {loot_table}")
             if trade_loot: output_lines.append(f"| trade_treasure_id = {trade_loot}")
@@ -323,11 +306,32 @@ def main():
             for s in raw_skills:
                 output_lines.append("{{NPC Skill")
                 output_lines.append(f"| skill_id = {s['id']}")
-                output_lines.append(f"| modes = {s['modes']}")
-                if s['start_round'] > 0: output_lines.append(f"| start_round = {s['start_round']}")
-                if s['conditions']: output_lines.append(f"| conditions = {s['conditions']}")
+                
+                if s['modes']:
+                    output_lines.append(f"| modes = {s['modes']}")
+                
+                if s['score'] != 1.0:
+                    output_lines.append(f"| score_modifier = {s['score']}")
+                    
+                if s['start_round'] != 0:
+                    output_lines.append(f"| start_round = {s['start_round']}")
+                
+                if s['aiflags'] != 0:
+                     output_lines.append(f"| aiflags = {s['aiflags']}")
+                     
+                if s['conditions']:
+                    output_lines.append(f"| conditions = {s['conditions']}")
+                    
                 output_lines.append("}}")
-            
+        
+        output_lines.append("</div>")
+        if raw_skills:
+            output_lines.append("")
+            output_lines.append("== Skills ==")
+            output_lines.append("")
+            output_lines.append("{{NPC Skills}}")
+        output_lines.append("")
+        output_lines.append("== Locations ==")
         output_lines.append("")
         output_lines.append("{{LocationTable}}")
 
