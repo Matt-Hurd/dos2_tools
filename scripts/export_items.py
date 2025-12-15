@@ -6,7 +6,6 @@ from dos2_tools.core.parsers import (
     parse_item_progression_names, parse_item_progression_visuals, parse_lsj_templates
 )
 from dos2_tools.core.stats_engine import resolve_all_stats
-from dos2_tools.core.localization import scan_lsj_for_uuids
 from dos2_tools.data_models import Item
 
 def main():
@@ -16,8 +15,6 @@ def main():
     loc_files = get_files_by_pattern(all_files, conf['patterns']['localization_xml'])
     loc_map = {}
     for f in loc_files: loc_map.update(parse_xml_localization(f))
-    
-    uuid_map = scan_lsj_for_uuids(all_files) # Replaces generic LSJ scan
     
     stats_files = get_files_by_pattern(all_files, conf['patterns']['stats'])
     raw_stats = {}

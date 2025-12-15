@@ -117,10 +117,7 @@ def get_variant_signature(data):
     loot = "None"
     treasures = data.get("Treasures", [])
     if treasures and isinstance(treasures, list):
-         for val in treasures:
-             if val and val != "Empty":
-                 loot = val
-                 break
+         loot = ';'.join(sorted(treasures))
 
     trade = parse_trade_treasures(data)
     tags = parse_tags(data)
@@ -250,6 +247,7 @@ def main():
         output_lines = ["{{InfoboxNPC", f"| name = {name}", "}}"]
         
         output_lines.append("<div style=\"display:none;\">")
+        collected_loot_ids = set()
         for sig, var_instances in variants.items():
             label = generate_variant_label(sig, all_sigs)
             primary = var_instances[0]
@@ -266,13 +264,11 @@ def main():
                         clean_pos = pos.replace(" ", ",")
                         coords.append(f"{clean_pos},{v.get('_REGION')}")
 
-            loot_table = "None"
-            treasures = primary.get("Treasures", [])
-            if treasures and isinstance(treasures, list):
-                for val in treasures:
-                    if val and val != "Empty":
-                        loot_table = val
-                        break
+            _, _, _, _, loot, _, _ = sig
+            loot_table = loot
+            if loot and loot != "Empty":
+                for l in loot.split(';'):
+                    collected_loot_ids.add(l)
 
             trade_loot = parse_trade_treasures(primary)
             tags = parse_tags(primary)
@@ -330,6 +326,14 @@ def main():
             output_lines.append("== Skills ==")
             output_lines.append("")
             output_lines.append("{{NPC Skills}}")
+        
+        if collected_loot_ids:
+            output_lines.append("")
+            output_lines.append("== Loot ==")
+            for t_id in sorted(list(collected_loot_ids)):
+                output_lines.append("")
+                output_lines.append(f"{{{{NPC Loot|table_id={t_id}}}}}")
+
         output_lines.append("")
         output_lines.append("== Locations ==")
         output_lines.append("")

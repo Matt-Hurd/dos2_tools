@@ -78,6 +78,7 @@ STAT_FIELDS = [
     "RuneEffectUpperbody",
     "RuneEffectWeapon",
     "RuneLevel",
+    "SkillID",
     "SavingThrow",
     "Sight",
     "SPCostBoost",
