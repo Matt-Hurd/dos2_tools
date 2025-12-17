@@ -11,7 +11,6 @@ from dos2_tools.core.formatters import sanitize_filename
 
 def parse_and_group_locations(location_strings):
     grouped = defaultdict(list)
-    
     pattern = re.compile(r"([-\d\.,]+)\s*\(([^)]+)\)(?:\s*inside\s*(.+))?")
 
     for loc_str in location_strings:
@@ -20,7 +19,7 @@ def parse_and_group_locations(location_strings):
             coords = match.group(1)
             region = match.group(2)
             container = match.group(3)
-
+            
             if container:
                 loc_name = f"{container}"
             else:
@@ -50,13 +49,32 @@ def format_coordinate(transform_node):
             return val.replace(" ", ",")
     return None
 
-def build_location_map(all_files, conf):
-    print("Building world location map (this may take a moment)...")
+def resolve_node_name(node_data, loc_map, uuid_map):
+    display_node = node_data.get("DisplayName")
+    if display_node and isinstance(display_node, dict):
+        handle = display_node.get("handle")
+        if handle in loc_map:
+            return loc_map[handle]
+
+    stats_node = node_data.get("Stats")
+    stats_id = None
+    if isinstance(stats_node, dict):
+        stats_id = stats_node.get("value")
+    elif isinstance(stats_node, str):
+        stats_id = stats_node
+        
+    if stats_id and stats_id != "None":
+        return get_localized_text(stats_id, uuid_map, loc_map)
     
-    template_locs = defaultdict(list)
+    return None
+
+def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
+    print("Scanning levels for items and variants...")
     
+    base_template_locs = defaultdict(list)
     container_locs = defaultdict(list)
-    
+    unique_level_variants = {}
+
     level_files = get_files_by_pattern(all_files, conf['patterns']['level_items'])
     
     for f_path in level_files:
@@ -71,29 +89,65 @@ def build_location_map(all_files, conf):
             if not coords: continue
             
             full_loc_str = f"{coords} ({region})"
-            
             template_uuid = obj_data.get("TemplateName", "")
+            
             if template_uuid:
-                template_locs[template_uuid].append(full_loc_str)
-            
-            item_list_root = obj_data.get("ItemList", [])
-            if not item_list_root: continue
-            
-            container_name = obj_data.get("Name", {}).get("value", "Container")
-            
-            for item_entry in item_list_root:
-                items = item_entry.get("Item", [])
-                if not isinstance(items, list): items = [items]
+                instance_name = resolve_node_name(obj_data, loc_map, uuid_map)
                 
-                for item in items:
-                    stats_id = item.get("ItemName", {}).get("value")
-                    
-                    if stats_id:
-                        loc_desc = f"{full_loc_str} inside {container_name}"
-                        container_locs[stats_id].append(loc_desc)
+                default_rt_name = None
+                default_rt_stats = None
 
-    print(f"Mapped {len(template_locs)} template locations and {len(container_locs)} container drops.")
-    return template_locs, container_locs
+                if template_uuid in root_template_db:
+                    default_rt_name = root_template_db[template_uuid].get("name")
+                    default_rt_stats = root_template_db[template_uuid].get("stats_id")
+
+                if instance_name and instance_name != default_rt_name:
+                    safe_var_name = sanitize_filename(instance_name)
+                    
+                    if safe_var_name not in unique_level_variants:
+                        stats_node = obj_data.get("Stats", {})
+                        stats_val = stats_node.get("value") if isinstance(stats_node, dict) else stats_node
+                        
+                        if not stats_val and default_rt_stats:
+                            stats_val = default_rt_stats
+
+                        # Check for Description override in the level object
+                        desc_override = None
+                        desc_node = obj_data.get('Description')
+                        if isinstance(desc_node, dict) and 'handle' in desc_node:
+                            handle = desc_node['handle']
+                            if handle in loc_map:
+                                desc_override = loc_map[handle]
+
+                        unique_level_variants[safe_var_name] = {
+                            "name": instance_name,
+                            "stats_id": stats_val,
+                            "root_template_uuid": template_uuid,
+                            "description": desc_override,
+                            "locations": set(),
+                            "is_variant": True
+                        }
+                    
+                    unique_level_variants[safe_var_name]["locations"].add(full_loc_str)
+                
+                else:
+                    base_template_locs[template_uuid].append(full_loc_str)
+
+            item_list_root = obj_data.get("ItemList", [])
+            if item_list_root:
+                container_name = obj_data.get("Name", {}).get("value", "Container")
+                
+                for item_entry in item_list_root:
+                    items = item_entry.get("Item", [])
+                    if not isinstance(items, list): items = [items]
+                    
+                    for item in items:
+                        stats_id = item.get("ItemName", {}).get("value")
+                        if stats_id:
+                            loc_desc = f"{full_loc_str} inside {container_name}"
+                            container_locs[stats_id].append(loc_desc)
+
+    return base_template_locs, container_locs, unique_level_variants
 
 def main():
     parser = argparse.ArgumentParser()
@@ -110,86 +164,97 @@ def main():
     loc_data = load_localization_data(all_files, conf, force_refresh=args.refresh_loc)
     loc_map = loc_data['handles']
     uuid_map = loc_data['uuids']
-    
-    template_loc_map, container_loc_map = build_location_map(all_files, conf)
-    
-    stats_files = []
-    stats_files.extend(get_files_by_pattern(all_files, conf['patterns']['objects']))
-    stats_files.extend(get_files_by_pattern(all_files, conf['patterns']['potions']))
-    
-    raw_stats = {}
-    for f in stats_files:
-        raw_stats.update(parse_stats_txt(f))
-    resolved_stats = resolve_all_stats(raw_stats)
 
+    print("Loading RootTemplates...")
     merged_files = get_files_by_pattern(all_files, conf['patterns']['merged_lsj'])
     merged_files.extend(get_files_by_pattern(all_files, conf['patterns']['root_templates_lsj']))
-    template_desc_data = {}
+    
+    rt_raw_data = {}
     for f in merged_files:
         _, t = parse_lsj_templates(f)
-        template_desc_data.update(t)        
-    
-    print("Aggregating Item Data by RootTemplate...")
+        rt_raw_data.update(t)
 
+    root_template_db = {} 
+    
+    for rt_uuid, rt_data in rt_raw_data.items():
+        item_type = rt_data.get("Type")
+        if isinstance(item_type, dict): item_type = item_type.get("value")
+        if item_type != "item": continue
+
+        name = resolve_node_name(rt_data, loc_map, uuid_map)
+        
+        desc = None
+        desc_node = rt_data.get('Description')
+        if isinstance(desc_node, dict) and 'handle' in desc_node:
+            handle = desc_node['handle']
+            if handle in loc_map:
+                desc = loc_map[handle]
+        
+        stats_node = rt_data.get("Stats")
+        stats_id = stats_node.get("value") if isinstance(stats_node, dict) else stats_node
+
+        root_template_db[rt_uuid] = {
+            "name": name,
+            "stats_id": stats_id,
+            "description": desc,
+            "raw_data": rt_data
+        }
+
+    template_loc_map, container_loc_map, unique_variants = scan_levels_for_items(
+        all_files, conf, root_template_db, loc_map, uuid_map
+    )
+
+    print("Aggregating Wiki Pages...")
+    
     pages_to_write = defaultdict(lambda: {
+        "name": None,
         "stats_id": None, 
         "description": None, 
         "locations": set(),
         "root_template_uuid": None
     })
 
-    for rt_uuid, rt_data in template_desc_data.items():
-        item_type = rt_data.get("Type")
-        if isinstance(item_type, dict): item_type = item_type.get("value")
-        
-        if item_type != "item": 
-            continue
-
-        stats_id_node = rt_data.get("Stats")
-        stats_id = None
-        if isinstance(stats_id_node, dict):
-            stats_id = stats_id_node.get("value")
-        elif isinstance(stats_id_node, str):
-            stats_id = stats_id_node
-
-        name = None
-        display_node = rt_data.get("DisplayName")
-        if display_node and isinstance(display_node, dict):
-            handle = display_node.get("handle")
-            if handle in loc_map:
-                name = loc_map[handle]
-        
-        if not name and stats_id:
-             name = get_localized_text(stats_id, uuid_map, loc_map)
-
-        if not name: 
-            continue
+    for rt_uuid, db_entry in root_template_db.items():
+        name = db_entry["name"]
+        if not name: continue
 
         safe_name = sanitize_filename(name)
+        
         page_entry = pages_to_write[safe_name]
-
+        
+        page_entry["name"] = name
         page_entry["root_template_uuid"] = rt_uuid
-
-        if not page_entry["stats_id"] and stats_id and stats_id != "None":
-            page_entry["stats_id"] = stats_id
-            
-        if not page_entry["description"]:
-            desc_node = rt_data.get('Description')
-            if isinstance(desc_node, dict) and 'handle' in desc_node:
-                handle = desc_node['handle']
-                if handle in loc_map:
-                    page_entry["description"] = loc_map[handle]
-
+        page_entry["stats_id"] = db_entry["stats_id"]
+        page_entry["description"] = db_entry["description"]
+        
         if rt_uuid in template_loc_map:
             page_entry["locations"].update(template_loc_map[rt_uuid])
 
-        if stats_id and stats_id in container_loc_map:
-            page_entry["locations"].update(container_loc_map[stats_id])
+        s_id = db_entry["stats_id"]
+        if s_id and s_id in container_loc_map:
+            page_entry["locations"].update(container_loc_map[s_id])
+
+    for safe_name, var_data in unique_variants.items():
+        page_entry = pages_to_write[safe_name]
+        
+        page_entry["name"] = var_data["name"]
+        page_entry["root_template_uuid"] = var_data["root_template_uuid"]
+        page_entry["stats_id"] = var_data["stats_id"]
+        
+        if var_data["description"]:
+            page_entry["description"] = var_data["description"]
+        elif not page_entry["description"]:
+             parent_uuid = var_data["root_template_uuid"]
+             if parent_uuid in root_template_db:
+                 page_entry["description"] = root_template_db[parent_uuid]["description"]
+
+        page_entry["locations"].update(var_data["locations"])
 
     print(f"Generating Wiki Pages for {len(pages_to_write)} unique items...")
 
     count = 0
     for safe_name, data in pages_to_write.items():
+        real_name = data["name"] or safe_name
         stats_id = data["stats_id"] or "Unknown"
         description = data["description"]
 
@@ -200,9 +265,9 @@ def main():
         path = os.path.join(args.outdir, fname)
 
         if "Skillbook" in safe_name:
-            content = f"{{{{InfoboxSkillbook\n|stats_id={stats_id}\n|root_template_uuid={data['root_template_uuid']}"
+            content = f"{{{{InfoboxSkillbook\n|name={real_name}\n|stats_id={stats_id}\n|root_template_uuid={data['root_template_uuid']}"
         else:
-            content = f"{{{{InfoboxItem\n|stats_id={stats_id}\n|root_template_uuid={data['root_template_uuid']}"
+            content = f"{{{{InfoboxItem\n|name={real_name}\n|stats_id={stats_id}\n|root_template_uuid={data['root_template_uuid']}"
             
         if description:
             safe_desc = description.replace('|', '{{!}}')
