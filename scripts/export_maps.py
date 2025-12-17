@@ -111,13 +111,15 @@ def main():
         if "WorldMap" not in path_parts: continue
         
         region_name = path_parts[path_parts.index("WorldMap") - 1]
-        if region_name in seen_maps:
+        if region_name not in seen_maps:
+            # print(f"Warning: Duplicate map for region {region_name}, skipping.")
+            seen_maps.add(region_name)
             continue
-        seen_maps.add(region_name)
         meta = parse_minimap_lsj(lsj_path)
         if not meta: continue
         
         dds_path = os.path.join(os.path.dirname(lsj_path), "MiniMap.dds")
+        print(dds_path)
         
         if os.path.exists(dds_path):
             print(f"Processing {region_name} (ID: {current_map_id})...")

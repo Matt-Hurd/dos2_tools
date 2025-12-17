@@ -25,9 +25,10 @@ def get_config():
             "item_prog_visuals": ["Public/**/Stats/Generated/Data/ItemProgressionVisuals.txt"],
             "item_prog_lsj": ["**/Localization/ItemProgression.lsj"],
             "localization_xml": ["Localization/English/english.xml"],
-            "merged_lsj": ["Mods/**/Levels/**/Items/_merged.lsj", "Public/**/RootTemplates/_merged.lsj"],
+            "merged_lsj": ["Public/**/RootTemplates/_merged.lsj"],
             "root_templates_lsj": ["Public/**/RootTemplates/*.lsj"],
             "skills": ["Public/**/Stats/Generated/Data/Skill*.txt"],
-            "level_characters": ["Mods/**/Levels/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/_merged.lsj"] 
+            "level_characters": ["Mods/**/Levels/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/**.lsj", "Mods/**/Levels/**/Characters/**.lsj"],
+            "level_items": ["Mods/**/Levels/**/Items/_merged.lsj", "Mods/**/Globals/**/Items/_merged.lsj"]
         }
     }

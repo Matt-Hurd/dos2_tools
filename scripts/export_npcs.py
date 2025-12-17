@@ -40,7 +40,7 @@ def parse_conditions(condition_list):
             elif max_hp < 100:
                 conditions.append(f"HP < {max_hp}%")
                 
-    return "; ".join(conditions)
+    return ";".join(conditions)
 
 def parse_skills(skill_list_node):
     parsed_skills = []
@@ -74,7 +74,7 @@ def parse_skills(skill_list_node):
 
             parsed_skills.append({
                 "id": skill_id,
-                "modes": "; ".join(modes),
+                "modes": ";".join(modes),
                 "score": skill.get("ScoreModifier", {}).get("value", 1.0),
                 "start_round": skill.get("StartRound", {}).get("value", 0),
                 "conditions": cond_str,
@@ -95,17 +95,18 @@ def parse_tags(data):
             val = t.get("Object", {}).get("value")
             if val: tags.append(val)
             
-    return "; ".join(sorted(list(set(tags))))
+    return ";".join(sorted(list(set(tags))))
 
 def parse_trade_treasures(data):
     tt_root = data.get("TradeTreasures", [])
     if not isinstance(tt_root, list): return ""
 
-    return "; ".join(tt_root)
+    return ";".join(tt_root)
 
 def get_variant_signature(data):
     stats = data.get("Stats") or "Unknown"
     level = data.get("LevelOverride", {}).get("value", 0)
+    dead = data.get("DefaultState", False)
     
     equip = "None"
     eq_node = data.get("Equipment", {})
@@ -121,8 +122,8 @@ def get_variant_signature(data):
 
     trade = parse_trade_treasures(data)
     tags = parse_tags(data)
-                 
-    return (stats, level, equip, skill_sig, loot, trade, tags)
+                  
+    return (stats, level, equip, skill_sig, loot, trade, tags, dead)
 
 def clean_label_string(text):
     text = text.replace('_', ' ')
@@ -144,7 +145,7 @@ def clean_label_string(text):
     return current_text if current_text else text
 
 def generate_variant_label(sig, all_sigs):
-    stats, level, equip, skill_sig, loot, trade, tags = sig
+    stats, level, equip, skill_sig, loot, trade, tags, dead = sig
     if len(all_sigs) == 1: return "Standard"
         
     labels = []
@@ -243,17 +244,17 @@ def main():
             variants[sig].append(inst)
             
         all_sigs = list(variants.keys())
-        
-        output_lines = ["{{InfoboxNPC", f"| name = {name}", "}}"]
+        output_lines = []
         
         output_lines.append("<div style=\"display:none;\">")
-        collected_loot_ids = set()
+        loot_map = defaultdict(set)
+        
         for sig, var_instances in variants.items():
             label = generate_variant_label(sig, all_sigs)
             primary = var_instances[0]
             
             stats_id = primary.get("Stats", "Unknown")
-            level = primary.get("LevelOverride", {}).get("value", "")
+            level_str = primary.get("LevelOverride", {}).get("value", "-1")
             
             coords = []
             for v in var_instances:
@@ -264,22 +265,40 @@ def main():
                         clean_pos = pos.replace(" ", ",")
                         coords.append(f"{clean_pos},{v.get('_REGION')}")
 
-            _, _, _, _, loot, _, _ = sig
+            _, level_int, _, _, loot, _, _, _ = sig
             loot_table = loot
             if loot and loot != "Empty":
                 for l in loot.split(';'):
-                    collected_loot_ids.add(l)
+                    loot_map[l].add(level_int)
 
             trade_loot = parse_trade_treasures(primary)
             tags = parse_tags(primary)
+
+            # Pre-calc skills for nesting
+            raw_skills = parse_skills(primary.get("SkillList", []))
+            skill_lines = []
+            for s in raw_skills:
+                skill_parts = [f"| skill_id = {s['id']}"]
+                if s['modes']: skill_parts.append(f"| modes = {s['modes']}")
+                if s['score'] != 1.0: skill_parts.append(f"| score = {s['score']}")
+                if s['start_round'] != 0: skill_parts.append(f"| start_round = {s['start_round']}")
+                if s['conditions']: skill_parts.append(f"| conditions = {s['conditions']}")
+                # AIFlags omitted for new template structure
+                
+                skill_lines.append("\t{{NPC Skill" + "".join(skill_parts) + "}}")
+            
+            skill_block = "\n".join(skill_lines)
 
             output_lines.append("")
             output_lines.append("{{NPC Variant")
             output_lines.append(f"| label = {label}")
             output_lines.append(f"| guid = {primary.get('MapKey', '')}")
             output_lines.append(f"| stats_id = {stats_id}")
-            output_lines.append(f"| level = {level}")
+            output_lines.append(f"| level = {level_str}")
             output_lines.append(f"| icon = {primary.get('Icon', '')}")
+            
+            if primary.get("DefaultState"):
+                output_lines.append(f"| dead = true")
             
             if stats_id in resolved_stats:
                 stat_block = resolved_stats[stats_id]
@@ -293,51 +312,44 @@ def main():
             if trade_loot: output_lines.append(f"| trade_treasure_id = {trade_loot}")
             
             if len(coords) == 1: output_lines.append(f"| coordinates = {coords[0]}")
-            elif len(coords) > 1: output_lines.append(f"| coordinates = {'; '.join(coords)}")
+            elif len(coords) > 1: output_lines.append(f"| coordinates = {';'.join(coords)}")
             
             if tags: output_lines.append(f"| tags = {tags}")
-            output_lines.append("}}")
             
-            raw_skills = parse_skills(primary.get("SkillList", []))
-            for s in raw_skills:
-                output_lines.append("{{NPC Skill")
-                output_lines.append(f"| skill_id = {s['id']}")
-                
-                if s['modes']:
-                    output_lines.append(f"| modes = {s['modes']}")
-                
-                if s['score'] != 1.0:
-                    output_lines.append(f"| score_modifier = {s['score']}")
-                    
-                if s['start_round'] != 0:
-                    output_lines.append(f"| start_round = {s['start_round']}")
-                
-                if s['aiflags'] != 0:
-                     output_lines.append(f"| aiflags = {s['aiflags']}")
-                     
-                if s['conditions']:
-                    output_lines.append(f"| conditions = {s['conditions']}")
-                    
-                output_lines.append("}}")
+            if skill_block:
+                output_lines.append(f"| skills = \n{skill_block}")
+
+            output_lines.append("}}")
         
         output_lines.append("</div>")
-        if raw_skills:
+        output_lines.append("{{InfoboxNPC")
+        output_lines.append(f"| name = {name}")
+        output_lines.append("}}")
+        
+        # Check if any variant had skills to determine if we show the Skills section
+        has_any_skills = any(parse_skills(v[0].get("SkillList", [])) for v in variants.values())
+        
+        if has_any_skills:
             output_lines.append("")
             output_lines.append("== Skills ==")
             output_lines.append("")
             output_lines.append("{{NPC Skills}}")
-        
-        if collected_loot_ids:
-            output_lines.append("")
-            output_lines.append("== Loot ==")
-            for t_id in sorted(list(collected_loot_ids)):
-                output_lines.append("")
-                output_lines.append(f"{{{{NPC Loot|table_id={t_id}}}}}")
-
+            
         output_lines.append("")
         output_lines.append("== Locations ==")
         output_lines.append("")
         output_lines.append("{{LocationTable}}")
+        
+        if loot_map:
+            output_lines.append("")
+            output_lines.append("== Loot ==")
+            for t_id in sorted(loot_map.keys()):
+                for lvl in sorted(list(loot_map[t_id])):
+                    output_lines.append("")
+                    if lvl > 0:
+                        output_lines.append(f"{{{{NPC Loot|table_id={t_id}|level={lvl}}}}}")
+                    else:
+                        output_lines.append(f"{{{{NPC Loot|table_id={t_id}}}}}")
 
         file_path = os.path.join(out_dir, f"{safe_name}.wikitext")
         with open(file_path, 'w', encoding='utf-8') as f:
