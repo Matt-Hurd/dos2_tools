@@ -99,27 +99,30 @@ def main():
     all_files = resolve_load_order(conf['base_path'], conf['cache_file'])
     map_files = get_files_by_pattern(all_files, "Mods/**/Levels/**/WorldMap/MiniMap.lsj")
     
-    lua_map_data = {}
-    base_maps_list = []
-    
-    current_map_id = 1
-    
-    seen_maps = set()
+    # --- PRE-PROCESSING: Identify Last Instance ---
+    # We map 'RegionName' -> 'FilePath'. 
+    # Because we iterate in load order, subsequent assignments overwrite earlier ones.
+    region_paths = {}
     
     for lsj_path in map_files:
         path_parts = lsj_path.replace('\\', '/').split('/')
         if "WorldMap" not in path_parts: continue
         
         region_name = path_parts[path_parts.index("WorldMap") - 1]
-        if region_name not in seen_maps:
-            # print(f"Warning: Duplicate map for region {region_name}, skipping.")
-            seen_maps.add(region_name)
-            continue
+        region_paths[region_name] = lsj_path
+
+    # --- MAIN PROCESSING ---
+    lua_map_data = {}
+    base_maps_list = []
+    current_map_id = 1
+    
+    # Iterate over the unique dictionary items
+    for region_name, lsj_path in region_paths.items():
+        
         meta = parse_minimap_lsj(lsj_path)
         if not meta: continue
         
         dds_path = os.path.join(os.path.dirname(lsj_path), "MiniMap.dds")
-        print(dds_path)
         
         if os.path.exists(dds_path):
             print(f"Processing {region_name} (ID: {current_map_id})...")

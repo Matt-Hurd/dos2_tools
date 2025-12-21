@@ -29,7 +29,7 @@ def main():
                 file_registry[norm] = full
 
     icon_registry = {}
-    target_path = os.path.normpath(os.path.join('Public', 'DivinityOrigins_1301db3d-1f54-4e98-9be5-5094030916e4', 'GUI')).lower()
+    target_path = os.path.normpath(os.path.join('Public', 'Shared', 'GUI')).lower()
     
     xml_files = [p for k, p in file_registry.items() if k.endswith('.lsx') and target_path in k]
 
@@ -53,7 +53,7 @@ def main():
 
             if not width or not height or not tex_path: continue
             
-            dds_key = os.path.normpath(os.path.join('Public', 'DivinityOrigins_1301db3d-1f54-4e98-9be5-5094030916e4', tex_path)).lower()
+            dds_key = os.path.normpath(os.path.join('Public', 'Shared', tex_path)).lower()
             full_dds = file_registry.get(dds_key)
             if not full_dds: continue
             

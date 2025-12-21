@@ -119,6 +119,7 @@ def main():
     stats_files = []
     stats_files.extend(get_files_by_pattern(all_files, conf['patterns']['objects']))
     stats_files.extend(get_files_by_pattern(all_files, conf['patterns']['potions']))
+    stats_files.extend(get_files_by_pattern(all_files, conf['patterns']['stats']))
     
     raw_stats = {}
     for f in stats_files:

@@ -1,3 +1,4 @@
+import json
 import os
 import argparse
 import re
@@ -66,10 +67,77 @@ def resolve_node_name(node_data, loc_map, uuid_map):
     if stats_id and stats_id != "None":
         return get_localized_text(stats_id, uuid_map, loc_map)
     
+    name_node = node_data.get("Name")
+    if isinstance(name_node, dict):
+        val = name_node.get("value")
+        if val: return val
+
     return None
 
+def extract_book_id(node_data):
+    actions = node_data.get("OnUsePeaceActions")
+    if not actions:
+        return None
+    
+    if isinstance(actions, list):
+        for action_block in actions:
+            action_list = action_block.get("Action", [])
+            if not isinstance(action_list, list):
+                action_list = [action_list]
+                
+            for act in action_list:
+                a_type = act.get("ActionType", {})
+                if isinstance(a_type, dict) and a_type.get("value") == 11:
+                    attributes = act.get("Attributes", [])
+                    if not isinstance(attributes, list):
+                        attributes = [attributes]
+                    
+                    for attr in attributes:
+                        book_node = attr.get("BookId")
+                        if book_node and isinstance(book_node, dict):
+                            return book_node.get("value")
+    return None
+
+def load_recipe_data(all_files, conf):
+    print("Loading Recipe prototypes...")
+    recipe_files = get_files_by_pattern(all_files, conf['patterns']['recipes'])
+    recipe_map = defaultdict(list)
+
+    for f_path in recipe_files:
+        data = json.loads(open(f_path, 'r', encoding='utf-8').read())
+        
+        save = data.get("save", {})
+        regions = save.get("regions", {})
+        recipes_node = regions.get("Recipes", {})
+        recipe_list = recipes_node.get("Recipe", [])
+        
+        if not isinstance(recipe_list, list):
+            recipe_list = [recipe_list]
+            
+        for r in recipe_list:
+            title_node = r.get("Title", {})
+            recipe_id_node = r.get("RecipeID", {})
+            output_node = r.get("Recipes", {})
+            
+            title = title_node.get("value")
+            r_id = recipe_id_node.get("value")
+            output_str = output_node.get("value")
+            
+            if not output_str:
+                continue
+
+            outputs = [x.strip() for x in output_str.split(',') if x.strip()]
+            
+            if title:
+                recipe_map[title].extend(outputs)
+            
+            if r_id and r_id != title:
+                recipe_map[r_id].extend(outputs)
+
+    return recipe_map
+
 def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
-    print("Scanning levels for items and variants...")
+    print("Scanning levels for items, variants, and NPC inventories...")
     
     base_template_locs = defaultdict(list)
     container_locs = defaultdict(list)
@@ -96,10 +164,13 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
                 
                 default_rt_name = None
                 default_rt_stats = None
+                default_book_id = None
 
                 if template_uuid in root_template_db:
-                    default_rt_name = root_template_db[template_uuid].get("name")
-                    default_rt_stats = root_template_db[template_uuid].get("stats_id")
+                    rt_entry = root_template_db[template_uuid]
+                    default_rt_name = rt_entry.get("name")
+                    default_rt_stats = rt_entry.get("stats_id")
+                    default_book_id = rt_entry.get("book_id")
 
                 if instance_name and instance_name != default_rt_name:
                     safe_var_name = sanitize_filename(instance_name)
@@ -110,8 +181,9 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
                         
                         if not stats_val and default_rt_stats:
                             stats_val = default_rt_stats
+                            
+                        current_book_id = extract_book_id(obj_data) or default_book_id
 
-                        # Check for Description override in the level object
                         desc_override = None
                         desc_node = obj_data.get('Description')
                         if isinstance(desc_node, dict) and 'handle' in desc_node:
@@ -124,6 +196,7 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
                             "stats_id": stats_val,
                             "root_template_uuid": template_uuid,
                             "description": desc_override,
+                            "book_id": current_book_id,
                             "locations": set(),
                             "is_variant": True
                         }
@@ -135,7 +208,7 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
 
             item_list_root = obj_data.get("ItemList", [])
             if item_list_root:
-                container_name = obj_data.get("Name", {}).get("value", "Container")
+                container_name = resolve_node_name(obj_data, loc_map, uuid_map) or "Container"
                 
                 for item_entry in item_list_root:
                     items = item_entry.get("Item", [])
@@ -146,6 +219,48 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
                         if stats_id:
                             loc_desc = f"{full_loc_str} inside {container_name}"
                             container_locs[stats_id].append(loc_desc)
+                            
+                        t_uuid = item.get("TemplateID", {}).get("value")
+                        if t_uuid:
+                            loc_desc = f"{full_loc_str} inside {container_name}"
+                            base_template_locs[t_uuid].append(loc_desc)
+
+    char_files = get_files_by_pattern(all_files, conf['patterns']['level_characters'])
+
+    for f_path in char_files:
+        if 'Test' in f_path or 'Develop' in f_path or "GM_" in f_path or "Arena" in f_path: continue
+
+        region = get_region_name(f_path)
+        _, level_objects = parse_lsj_templates(f_path)
+
+        for map_key, obj_data in level_objects.items():
+            
+            coords = format_coordinate(obj_data.get("Transform"))
+            if not coords: continue
+
+            npc_name = resolve_node_name(obj_data, loc_map, uuid_map)
+            if not npc_name:
+                npc_name = "Unknown NPC"
+
+            full_loc_str = f"{coords} ({region})"
+
+            item_list_root = obj_data.get("ItemList", [])
+            if not item_list_root: continue
+
+            for item_entry in item_list_root:
+                items = item_entry.get("Item", [])
+                if not isinstance(items, list): items = [items]
+
+                for item in items:
+                    stats_id = item.get("ItemName", {}).get("value")
+                    if stats_id and stats_id != "":
+                        loc_desc = f"{full_loc_str} inside {npc_name}"
+                        container_locs[stats_id].append(loc_desc)
+
+                    template_id = item.get("TemplateID", {}).get("value")
+                    if template_id and template_id != "":
+                        loc_desc = f"{full_loc_str} inside {npc_name}"
+                        base_template_locs[template_id].append(loc_desc)
 
     return base_template_locs, container_locs, unique_level_variants
 
@@ -164,6 +279,8 @@ def main():
     loc_data = load_localization_data(all_files, conf, force_refresh=args.refresh_loc)
     loc_map = loc_data['handles']
     uuid_map = loc_data['uuids']
+    
+    recipe_db = load_recipe_data(all_files, conf)
 
     print("Loading RootTemplates...")
     merged_files = get_files_by_pattern(all_files, conf['patterns']['merged_lsj'])
@@ -192,11 +309,14 @@ def main():
         
         stats_node = rt_data.get("Stats")
         stats_id = stats_node.get("value") if isinstance(stats_node, dict) else stats_node
+        
+        book_id = extract_book_id(rt_data)
 
         root_template_db[rt_uuid] = {
             "name": name,
             "stats_id": stats_id,
             "description": desc,
+            "book_id": book_id,
             "raw_data": rt_data
         }
 
@@ -211,7 +331,8 @@ def main():
         "stats_id": None, 
         "description": None, 
         "locations": set(),
-        "root_template_uuid": None
+        "root_template_uuid": None,
+        "book_id": None
     })
 
     for rt_uuid, db_entry in root_template_db.items():
@@ -226,6 +347,7 @@ def main():
         page_entry["root_template_uuid"] = rt_uuid
         page_entry["stats_id"] = db_entry["stats_id"]
         page_entry["description"] = db_entry["description"]
+        page_entry["book_id"] = db_entry["book_id"]
         
         if rt_uuid in template_loc_map:
             page_entry["locations"].update(template_loc_map[rt_uuid])
@@ -240,6 +362,7 @@ def main():
         page_entry["name"] = var_data["name"]
         page_entry["root_template_uuid"] = var_data["root_template_uuid"]
         page_entry["stats_id"] = var_data["stats_id"]
+        page_entry["book_id"] = var_data.get("book_id")
         
         if var_data["description"]:
             page_entry["description"] = var_data["description"]
@@ -257,6 +380,7 @@ def main():
         real_name = data["name"] or safe_name
         stats_id = data["stats_id"] or "Unknown"
         description = data["description"]
+        book_id = data["book_id"]
 
         raw_locations = sorted(list(data["locations"]))
         grouped_locations = parse_and_group_locations(raw_locations)
@@ -275,6 +399,34 @@ def main():
         
         content += "\n}}\n"
         
+        if book_id:
+            book_text = None
+            if book_id in loc_map:
+                book_text = loc_map[book_id]
+            elif book_id in uuid_map:
+                book_text = uuid_map[book_id]
+            
+            if isinstance(book_text, list):
+                found_text = None
+                for ref in book_text:
+                    if isinstance(ref, dict) and "handle" in ref:
+                        h = ref["handle"]
+                        if h in loc_map:
+                            val = loc_map[h]
+                            if isinstance(val, str):
+                                found_text = val
+                                break
+                book_text = found_text
+
+            if book_text and isinstance(book_text, str):
+                safe_bt = book_text.replace('|', '{{!}}')
+                content += f"\n{{{{BookText|text={safe_bt}}}}}\n"
+            
+            if book_id in recipe_db:
+                recipes = recipe_db[book_id]
+                for r in recipes:
+                    content += f"\n{{{{BookTeaches|recipe={r}}}}}\n"
+
         if grouped_locations:
             content += "\n== Locations ==\n"
             sorted_keys = sorted(grouped_locations.keys())

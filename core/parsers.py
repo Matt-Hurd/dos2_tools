@@ -227,6 +227,10 @@ def parse_lsj_templates(filepath):
             final_obj["Type"] = go.get("Type").get("value")
         if go.get("ItemList"):
             final_obj["ItemList"] = go.get("ItemList")
+        if go.get("OnUsePeaceActions"):
+            final_obj["OnUsePeaceActions"] = go.get("OnUsePeaceActions")
+        if go.get("InventoryList"):
+            final_obj["InventoryList"] = go.get("InventoryList")
 
         peace_actions = go.get("OnUsePeaceActions")
         if peace_actions:

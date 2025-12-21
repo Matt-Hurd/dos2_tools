@@ -16,7 +16,7 @@ STAT_FIELDS = [
     "APMaximum", "APStart", "APRecovery",
     "FireResistance", "EarthResistance", "WaterResistance", "AirResistance", 
     "PoisonResistance", "PhysicalResistance", "PiercingResistance",
-    "Initiative", "Movement", "CriticalChance", "Dodge", "Accuracy"
+    "Initiative", "Movement", "CriticalChance", "Dodge", "Accuracy", "Talents"
 ]
 
 def parse_conditions(condition_list):
@@ -248,6 +248,7 @@ def main():
         
         output_lines.append("<div style=\"display:none;\">")
         loot_map = defaultdict(set)
+        trade_map = defaultdict(set)
         
         for sig, var_instances in variants.items():
             label = generate_variant_label(sig, all_sigs)
@@ -265,13 +266,21 @@ def main():
                         clean_pos = pos.replace(" ", ",")
                         coords.append(f"{clean_pos},{v.get('_REGION')}")
 
-            _, level_int, _, _, loot, _, _, _ = sig
+            # Capture trade string here
+            _, level_int, _, _, loot, trade, _, _ = sig
+            
+            # Map Loot
             loot_table = loot
             if loot and loot != "Empty":
                 for l in loot.split(';'):
-                    loot_map[l].add(level_int)
+                    if l: loot_map[l].add(level_int)
+            
+            # Map Trade
+            trade_loot = trade # Use trade from sig which comes from parse_trade_treasures
+            if trade_loot:
+                for t in trade_loot.split(';'):
+                    if t: trade_map[t].add(level_int)
 
-            trade_loot = parse_trade_treasures(primary)
             tags = parse_tags(primary)
 
             # Pre-calc skills for nesting
@@ -295,7 +304,7 @@ def main():
             output_lines.append(f"| guid = {primary.get('MapKey', '')}")
             output_lines.append(f"| stats_id = {stats_id}")
             output_lines.append(f"| level = {level_str}")
-            output_lines.append(f"| icon = {primary.get('Icon', '')}")
+            output_lines.append(f"| icon = {primary.get('Icon', '')}_Icon.webp")
             
             if primary.get("DefaultState"):
                 output_lines.append(f"| dead = true")
@@ -339,6 +348,12 @@ def main():
         output_lines.append("== Locations ==")
         output_lines.append("")
         output_lines.append("{{LocationTable}}")
+        
+        if trade_map:
+            output_lines.append("")
+            output_lines.append("== Trades ==")
+            output_lines.append("")
+            output_lines.append(f"{{{{NPC Trades|table_ids={';'.join(map(str, trade_map.keys()))}}}}}")
         
         if loot_map:
             output_lines.append("")

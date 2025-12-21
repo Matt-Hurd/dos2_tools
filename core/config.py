@@ -29,6 +29,7 @@ def get_config():
             "root_templates_lsj": ["Public/**/RootTemplates/*.lsj"],
             "skills": ["Public/**/Stats/Generated/Data/Skill*.txt"],
             "level_characters": ["Mods/**/Levels/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/**.lsj", "Mods/**/Levels/**/Characters/**.lsj"],
-            "level_items": ["Mods/**/Levels/**/Items/_merged.lsj", "Mods/**/Globals/**/Items/_merged.lsj"]
+            "level_items": ["Mods/**/Levels/**/Items/_merged.lsj", "Mods/**/Globals/**/Items/_merged.lsj"],
+            "recipes": ["Mods/**/Story/Journal/recipes_prototypes.lsj"],
         }
     }

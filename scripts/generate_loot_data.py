@@ -11,11 +11,9 @@ from dos2_tools.core.parsers import parse_stats_txt
 from dos2_tools.core.stats_engine import resolve_all_stats
 from dos2_tools.core.localization import load_localization_data, get_localized_text
 
-# Tables that ALWAYS get their own page
 FORCE_SHARED_PREFIXES = ["ST_Gen", "ST_Trader", "Reward_", "T_Reward", "ST_Humanoid"]
 IGNORE_TABLES = ["Empty", "Generic"]
 
-# --- STATS MANAGER ---
 class StatsManager:
     def __init__(self, all_stats):
         self.stats = all_stats
@@ -30,6 +28,12 @@ class StatsManager:
                     'id': stat_name,
                     'min_level': int(data.get("MinLevel", 0)),
                 })
+
+    def get_item_min_level(self, item_name):
+        lookup = item_name[2:] if item_name.startswith("I_") else item_name
+        if lookup in self.stats:
+            return int(self.stats[lookup].get("MinLevel", 0))
+        return 0
 
     def get_category_info(self, cat_name):
         items = self.category_map.get(cat_name)
@@ -55,8 +59,6 @@ class StatsManager:
         if is_equipment:
             return "Equipment", []
         
-        # It is a Collection (Potions, Scrolls, Arrows, etc.)
-        # Sort by level
         sorted_items = sorted(items, key=lambda x: (x['min_level'], x['id']))
         return "Collection", sorted_items
 
@@ -165,6 +167,9 @@ class LootGraph:
     def get_shared_tables(self):
         shared = set()
         for t_id in self.tables:
+            # Add denylist
+            if "Skillbook" in t_id:
+                continue
             parents = self.reverse_edges.get(t_id, [])
             unique_parents = set(parents)
             if len(unique_parents) > 1:
@@ -177,7 +182,6 @@ class LootGraph:
         return shared
 
 def clean_lua_string(name):
-    # Escape single quotes for Lua strings
     return name.replace("'", "\\'")
 
 def generate_table_page(table_id):
@@ -211,7 +215,6 @@ def main():
     for f in tt:
         with open(f,'r',encoding='utf-8',errors='replace') as fo: parser.load_data(fo.read())
 
-    # Build Graph
     graph = LootGraph()
     for tid, groups in parser.tables.items():
         graph.add_table(tid, groups)
@@ -220,16 +223,12 @@ def main():
     shared_tables = graph.get_shared_tables()
     print(f"Identified {len(shared_tables)} shared tables.")
 
-    # Generate Module Data
     lines = []
     lines.append("return {")
     
     for t_id, groups in parser.tables.items():
         if not groups or t_id in IGNORE_TABLES: continue
         
-        # Clean table ID for Lua key (remove T_ if present? usually table keys are kept raw but escaped)
-        # But we previously used clean_name which removed I_. Tables usually don't have I_.
-        # We will just escape quotes for the table key.
         safe_tid = clean_lua_string(t_id)
         if safe_tid.startswith("T_"): safe_tid = safe_tid[2:]
 
@@ -248,21 +247,22 @@ def main():
                     rel_chance = item['freq'] / total_freq
                     internal_name = item['name']
                     
-                    s_lvl = item['s'] if item['s'] else "nil"
+                    stat_min = stats_mgr.get_item_min_level(internal_name)
+                    table_min = item['s'] if item['s'] is not None else 0
+                    
+                    actual_min = max(stat_min, table_min)
+                    
+                    s_lvl = str(actual_min) if actual_min > 1 else "nil"
                     e_lvl = item['e'] if item['e'] else "nil"
                     
                     extra_data_list = []
                     cat_type, cat_items = stats_mgr.get_category_info(internal_name)
                     
-                    # --- NAME RESOLUTION LOGIC ---
                     display_name = internal_name
                     
-                    # Check if it is a specific item
                     if internal_name.startswith("I_"):
-                        # 1. Strip I_ immediately
                         clean_item_id = internal_name[2:]
                         
-                        # 2. Localize using the stripped name
                         loc_text = get_localized_text(clean_item_id, uuid_map, loc_map)
                         
                         if not loc_text:
@@ -272,19 +272,13 @@ def main():
                                 if item_entry:
                                     loc_text = item_entry.get("display_name")
                         
-                        # 3. Set Display Name
                         display_name = loc_text if loc_text else clean_item_id
-                        
-                        # 4. Mark as Item for Lua
                         extra_data_list.append("IsItem=true")
                     elif internal_name.startswith("T_"):
-                        # Table reference
                         display_name = internal_name[2:]
                     else:
-                        # Category or other
                         display_name = internal_name
 
-                    # Escape for Lua
                     safe_display_name = clean_lua_string(display_name)
 
                     if cat_type == "Equipment":
@@ -292,7 +286,6 @@ def main():
                     elif cat_type == "Collection" and cat_items:
                         tips = []
                         for ci in cat_items:
-                            # Collection items might also have prefixes, though usually they are stats IDs
                             c_id = ci['id']
                             c_lookup = c_id
                             if c_id.startswith("I_"): c_lookup = c_id[2:]
@@ -300,7 +293,6 @@ def main():
                             c_loc = get_localized_text(c_lookup, uuid_map, loc_map)
                             c_name = c_loc if c_loc else c_lookup
                             
-                            # Clean for string inclusion
                             c_name = clean_lua_string(c_name)
                             
                             lvl_str = f" ({ci['min_level']})" if ci['min_level'] > 1 else ""
@@ -322,7 +314,6 @@ def main():
         f.write("\n".join(lines))
     print("Generated Module_LootData.lua")
 
-    # Generate Pages
     out_dir = "loot_wikitext"
     if not os.path.exists(out_dir): os.makedirs(out_dir)
     for t_id in shared_tables:
