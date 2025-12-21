@@ -103,6 +103,51 @@ def parse_trade_treasures(data):
 
     return ";".join(tt_root)
 
+def resolve_item_name(template_uuid, stats_id, root_templates, loc_map, uuid_map):
+    if template_uuid and template_uuid in root_templates:
+        rt_data = root_templates[template_uuid]
+        display_node = rt_data.get("DisplayName")
+        if display_node:
+            handle = display_node.get("handle")
+            if handle and handle in loc_map:
+                return loc_map[handle]
+            
+            val = display_node.get("value")
+            if val: return val
+            
+        stats_node = rt_data.get("Stats")
+        s_id = stats_node.get("value") if isinstance(stats_node, dict) else stats_node
+        if s_id and s_id != "None":
+            loc_text = get_localized_text(s_id, uuid_map, loc_map)
+            if loc_text: return loc_text
+            return s_id
+
+    if stats_id and stats_id != "None":
+        loc_text = get_localized_text(stats_id, uuid_map, loc_map)
+        if loc_text: return loc_text
+        return stats_id
+        
+    return None
+
+def parse_inventory_items(item_list_root, root_templates, loc_map, uuid_map):
+    items_found = []
+    if not item_list_root: return items_found
+
+    for item_entry in item_list_root:
+        items = item_entry.get("Item", [])
+        if not isinstance(items, list): items = [items]
+        
+        for item in items:
+            t_uuid = item.get("TemplateID", {}).get("value")
+            stats_id = item.get("ItemName", {}).get("value")
+            amount = item.get("Amount", {}).get("value", 1)
+            
+            name = resolve_item_name(t_uuid, stats_id, root_templates, loc_map, uuid_map)
+            if name:
+                items_found.append((name, amount))
+    
+    return items_found
+
 def get_variant_signature(data):
     stats = data.get("Stats") or "Unknown"
     level = data.get("LevelOverride", {}).get("value", 0)
@@ -119,8 +164,12 @@ def get_variant_signature(data):
     treasures = data.get("Treasures", [])
     if treasures and isinstance(treasures, list):
          loot = ';'.join(sorted(treasures))
+    if loot == "Empty":
+        loot = ""
 
     trade = parse_trade_treasures(data)
+    if trade == "Empty":
+        trade = ""
     tags = parse_tags(data)
                   
     return (stats, level, equip, skill_sig, loot, trade, tags, dead)
@@ -230,6 +279,11 @@ def main():
 
             if not final_name or final_name == "Unknown": continue
             final_data['_REGION'] = region_name
+            
+            # Stores list of tuples: (name, amount)
+            inv_items = parse_inventory_items(final_data.get("ItemList", []), root_templates, loc_map, uuid_map)
+            final_data['_INVENTORY'] = inv_items
+            
             grouped_npcs[final_name].append(final_data)
 
     print(f"Grouped into {len(grouped_npcs)} unique names.")
@@ -249,6 +303,7 @@ def main():
         output_lines.append("<div style=\"display:none;\">")
         loot_map = defaultdict(set)
         trade_map = defaultdict(set)
+        inventory_set = set()
         
         for sig, var_instances in variants.items():
             label = generate_variant_label(sig, all_sigs)
@@ -265,25 +320,25 @@ def main():
                     if pos: 
                         clean_pos = pos.replace(" ", ",")
                         coords.append(f"{clean_pos},{v.get('_REGION')}")
+                
+                if v.get('_INVENTORY'):
+                    for item_name, amount in v['_INVENTORY']:
+                        inventory_set.add((item_name, amount))
 
-            # Capture trade string here
             _, level_int, _, _, loot, trade, _, _ = sig
             
-            # Map Loot
             loot_table = loot
             if loot and loot != "Empty":
                 for l in loot.split(';'):
                     if l: loot_map[l].add(level_int)
             
-            # Map Trade
-            trade_loot = trade # Use trade from sig which comes from parse_trade_treasures
+            trade_loot = trade
             if trade_loot:
                 for t in trade_loot.split(';'):
                     if t: trade_map[t].add(level_int)
 
             tags = parse_tags(primary)
 
-            # Pre-calc skills for nesting
             raw_skills = parse_skills(primary.get("SkillList", []))
             skill_lines = []
             for s in raw_skills:
@@ -292,7 +347,6 @@ def main():
                 if s['score'] != 1.0: skill_parts.append(f"| score = {s['score']}")
                 if s['start_round'] != 0: skill_parts.append(f"| start_round = {s['start_round']}")
                 if s['conditions']: skill_parts.append(f"| conditions = {s['conditions']}")
-                # AIFlags omitted for new template structure
                 
                 skill_lines.append("\t{{NPC Skill" + "".join(skill_parts) + "}}")
             
@@ -335,7 +389,6 @@ def main():
         output_lines.append(f"| name = {name}")
         output_lines.append("}}")
         
-        # Check if any variant had skills to determine if we show the Skills section
         has_any_skills = any(parse_skills(v[0].get("SkillList", [])) for v in variants.values())
         
         if has_any_skills:
@@ -349,7 +402,7 @@ def main():
         output_lines.append("")
         output_lines.append("{{LocationTable}}")
         
-        if trade_map:
+        if trade_map and ';'.join(trade_map.keys()) != "Empty":
             output_lines.append("")
             output_lines.append("== Trades ==")
             output_lines.append("")
@@ -365,6 +418,19 @@ def main():
                         output_lines.append(f"{{{{NPC Loot|table_id={t_id}|level={lvl}}}}}")
                     else:
                         output_lines.append(f"{{{{NPC Loot|table_id={t_id}}}}}")
+
+        if inventory_set:
+            output_lines.append("")
+            output_lines.append("== Inventory ==")
+            output_lines.append('{| class="wikitable"')
+            output_lines.append('! Item !! Amount')
+            output_lines.append('|-')
+            # Sort by name
+            for item, amount in sorted(list(inventory_set), key=lambda x: x[0]):
+                output_lines.append(f"| {{{{ SmItemIcon|{item} }}}}")
+                output_lines.append(f"| {amount}")
+                output_lines.append('|-')
+            output_lines.append("|}")
 
         file_path = os.path.join(out_dir, f"{safe_name}.wikitext")
         with open(file_path, 'w', encoding='utf-8') as f:

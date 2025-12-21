@@ -21,6 +21,8 @@ def get_config():
             "stats": ["Stats/Generated/Data/*.txt", "Public/**/Stats/Generated/Data/*.txt"],
             "objects": ["Stats/Generated/Data/Object.txt", "Public/**/Stats/Generated/Data/Object.txt"],
             "potions": ["Stats/Generated/Data/Potion.txt", "Public/**/Stats/Generated/Data/Potion.txt"],
+            "armors": ["Stats/Generated/Data/Armor.txt", "Public/**/Stats/Generated/Data/Armor.txt"],
+            "weapons": ["Stats/Generated/Data/Weapon.txt", "Public/**/Stats/Generated/Data/Weapon.txt"],
             "item_prog_names": ["Public/**/Stats/Generated/Data/ItemProgressionNames.txt"],
             "item_prog_visuals": ["Public/**/Stats/Generated/Data/ItemProgressionVisuals.txt"],
             "item_prog_lsj": ["**/Localization/ItemProgression.lsj"],
@@ -31,5 +33,7 @@ def get_config():
             "level_characters": ["Mods/**/Levels/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/**.lsj", "Mods/**/Levels/**/Characters/**.lsj"],
             "level_items": ["Mods/**/Levels/**/Items/_merged.lsj", "Mods/**/Globals/**/Items/_merged.lsj"],
             "recipes": ["Mods/**/Story/Journal/recipes_prototypes.lsj"],
+            "item_combo_properties": ["Public/Shared/Stats/Generated/ItemComboProperties.txt"],
+            "item_combos": ["Public/Shared/Stats/Generated/ItemCombos.txt"],
         }
     }

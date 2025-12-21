@@ -3,6 +3,89 @@ import json
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 
+def parse_item_combos(filepath):
+    regex_combo = re.compile(r'new ItemCombination "(.+?)"')
+    regex_result = re.compile(r'new ItemCombinationResult "(.+?)"')
+    regex_data = re.compile(r'data "(.+?)" "(.*?)"')
+
+    all_combos = OrderedDict()
+    current_combo = None
+    parsing_results = False
+
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+
+                match_combo = regex_combo.match(line)
+                if match_combo:
+                    combo_id = match_combo.group(1)
+                    current_combo = {
+                        "ID": combo_id, 
+                        "Data": OrderedDict(), 
+                        "Results": OrderedDict()
+                    }
+                    all_combos[combo_id] = current_combo
+                    parsing_results = False
+                    continue
+
+                match_result = regex_result.match(line)
+                if match_result:
+                    if current_combo:
+                        parsing_results = True
+                        current_combo["ResultID"] = match_result.group(1)
+                    continue
+
+                match_data = regex_data.match(line)
+                if match_data and current_combo:
+                    key = match_data.group(1)
+                    val = match_data.group(2)
+                    
+                    if parsing_results:
+                        current_combo["Results"][key] = val
+                    else:
+                        current_combo["Data"][key] = val
+                    continue
+
+    except Exception as e:
+        print(f"Error parsing {filepath}: {e}")
+
+    return all_combos
+
+def parse_item_combo_properties(filepath):
+    regex_property = re.compile(r'new ItemComboProperty "(.+?)"')
+    regex_entry = re.compile(r'new ItemComboPropertyEntry')
+    regex_data = re.compile(r'data "(.+?)" "(.*?)"')
+    all_properties = {}
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                
+                match_property = regex_property.match(line)
+                if match_property:
+                    property_id = match_property.group(1)
+                    all_properties[property_id] = []
+                    continue
+                
+                match_entry = regex_entry.match(line)
+                if match_entry:
+                    current_entry = {}
+                    all_properties[property_id].append(current_entry)
+                    continue
+                    
+                match_data = regex_data.match(line)
+                if match_data and all_properties[property_id]:
+                    key = match_data.group(1)
+                    val = match_data.group(2)
+                    all_properties[property_id][-1][key] = val
+                    continue
+    except Exception as e:
+        print(f"Error parsing {filepath}: {e}")
+    return all_properties
+
 def parse_stats_txt(filepath):
     regex_entry = re.compile(r'new entry "(.+?)"')
     regex_using = re.compile(r'using "(.+?)"')
