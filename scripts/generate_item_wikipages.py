@@ -5,16 +5,16 @@ import re
 from collections import defaultdict
 from dos2_tools.core.config import get_config
 from dos2_tools.core.file_system import resolve_load_order, get_files_by_pattern
-from dos2_tools.core.parsers import parse_stats_txt, parse_lsj_templates, parse_item_combo_properties
+from dos2_tools.core.parsers import (
+    parse_stats_txt, parse_lsj_templates, 
+    parse_item_combo_properties, parse_item_combos, 
+    parse_object_category_previews
+)
 from dos2_tools.core.localization import load_localization_data, get_localized_text
 from dos2_tools.core.formatters import sanitize_filename
 from dos2_tools.core.stats_engine import resolve_all_stats
 
 def parse_and_group_locations(location_tuples):
-    """
-    Input: list of (location_string, specific_uuid)
-    Output: dict keyed by (region, loc_name, specific_uuid) -> list of coordinates
-    """
     grouped = defaultdict(list)
     pattern = re.compile(r"([-\d\.,]+)\s*\(([^)]+)\)(?:\s*inside\s*(.+))?")
 
@@ -30,7 +30,6 @@ def parse_and_group_locations(location_tuples):
             else:
                 loc_name = "Ground Spawn"
 
-            # We use an empty string if uuid is None to ensure it's sortable later
             safe_uuid = uuid if uuid else ""
             key = (region, loc_name, safe_uuid)
             grouped[key].append(coords)
@@ -143,6 +142,17 @@ def load_recipe_prototype_data(all_files, conf):
 
     return recipe_map
 
+valid_levels = [
+    "ARX_Endgame",
+    "ARX_Main",
+    "CoS_Main",
+    "CoS_Main_Ending",
+    "FJ_FortJoy_Main",
+    "LV_HoE_Main",
+    "RC_Main",
+    "TUT_Tutorial_A",
+]
+
 def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
     base_template_locs = defaultdict(list)
     container_locs = defaultdict(list)
@@ -152,7 +162,8 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
     level_files = get_files_by_pattern(all_files, conf['patterns']['level_items'])
     
     for f_path in level_files:
-        if 'Test' in f_path or 'Develop' in f_path or "GM_" in f_path or "Arena" in f_path or "_TMPL_Sandbox" in f_path: continue
+        if not any(lv in f_path for lv in valid_levels):
+            continue
         
         region = get_region_name(f_path)
         found_regions.add(region)
@@ -248,7 +259,7 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
 
             npc_name = resolve_node_name(obj_data, loc_map, uuid_map)
             if npc_name:
-                npc_name = f"[[{npc_name}]]"
+                npc_name = f"[[{npc_name}]]|on_npc=Yes"
             else:
                 npc_name = "Unknown NPC"
 
@@ -274,6 +285,105 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
 
     return base_template_locs, container_locs, unique_level_variants, sorted(list(found_regions))
 
+def generate_crafting_wikitext(target_stats_id, target_categories, target_properties, all_combos, loc_map, uuid_map, resolved_all_stats, combo_props, category_previews):
+    creation_rows = []
+    product_rows = []
+
+    for combo_id, combo in all_combos.items():
+        data = combo.get("Data", {})
+        results = combo.get("Results", {})
+        
+        result_id = results.get("Result 1")
+        
+        is_creation = (result_id == target_stats_id)
+        is_product = False
+        
+        if not is_creation:
+            for i in range(1, 6):
+                obj_id = data.get(f"Object {i}")
+                obj_type = data.get(f"Type {i}")
+                
+                if not obj_id: continue
+                
+                if obj_type == "Object" and obj_id == target_stats_id:
+                    is_product = True
+                    break
+                
+                if obj_type == "Category" and target_categories:
+                    if obj_id in target_categories:
+                        is_product = True
+                        break
+                
+                if obj_type == "Property" and target_properties:
+                    if obj_id in target_properties:
+                        is_product = True
+                        break
+
+        if not is_creation and not is_product:
+            continue
+
+        row_text = "{{#invoke:CraftingRecipe|row"
+        
+        station = data.get("CraftingStation")
+        if station:
+            row_text += f"\n| station = {station}"
+
+        for i in range(1, 6):
+            obj_id = data.get(f"Object {i}")
+            obj_type = data.get(f"Type {i}")
+            transform = data.get(f"Transform {i}")
+            
+            if not obj_id: continue
+            
+            row_text += f"\n| mat{i} = {obj_id}"
+            if obj_type: row_text += f"\n| mat{i}_type = {obj_type}"
+            if transform: row_text += f"\n| mat{i}_transform = {transform}"
+            
+            name = None
+            icon = None
+            
+            if obj_type == "Object":
+                name = get_localized_text(obj_id, uuid_map, loc_map)
+            
+            elif obj_type == "Category":
+                name = obj_id
+                if obj_id in category_previews:
+                    icon_val = category_previews[obj_id].get("Icon")
+                    if icon_val: icon = f"{icon_val}_Icon.webp"
+            
+            elif obj_type == "Property":
+                name = obj_id
+                if obj_id in combo_props:
+                    icon_val = combo_props[obj_id].get("data", {}).get("PreviewIcon")
+                    if icon_val: icon = f"{icon_val}_Icon.webp"
+            
+            if name:
+                row_text += f"\n| mat{i}_name = {name}"
+            if icon:
+                row_text += f"\n| mat{i}_icon = {icon}"
+
+        if result_id:
+            row_text += f"\n| res1 = {result_id}"
+            res_name = get_localized_text(result_id, uuid_map, loc_map)
+            if res_name:
+                row_text += f"\n| res1_name = {res_name}"
+
+        row_text += "\n}}"
+
+        if is_creation:
+            creation_rows.append(row_text)
+        elif is_product:
+            product_rows.append(row_text)
+            
+    def wrap_table(rows):
+        if not rows: return None
+        header = '{{CraftingTable/Header}}\n'
+        body = '\n'.join(rows)
+        footer = '\n{{CraftingTable/Footer}}'
+        return header + body + footer
+
+    return wrap_table(creation_rows), wrap_table(product_rows)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", default="item_wikitext")
@@ -298,7 +408,7 @@ def main():
     weapon_stats_files = get_files_by_pattern(all_files, conf['patterns']['weapons'])
     armor_stats_files = get_files_by_pattern(all_files, conf['patterns']['armors'])
     all_stats_files = get_files_by_pattern(all_files, conf['patterns']['stats'])
-    
+
     weapon_stats = {}
     for f in weapon_stats_files:
         weapon_stats.update(parse_stats_txt(f))
@@ -320,6 +430,21 @@ def main():
     resolved_weapon_stats = resolve_all_stats(weapon_stats)
     resolved_all_stats = resolve_all_stats(all_stats)
     
+    combo_prop_files = get_files_by_pattern(all_files, conf['patterns']['item_combo_properties'])
+    combo_props = {}
+    for f in combo_prop_files:
+        combo_props.update(parse_item_combo_properties(f))
+
+    cat_preview_files = get_files_by_pattern(all_files, conf['patterns']['object_categories_item_combos'])
+    category_previews = {}
+    for f in cat_preview_files:
+        category_previews.update(parse_object_category_previews(f))
+
+    item_combos_files = get_files_by_pattern(all_files, conf['patterns']['item_combos'])
+    all_item_combos = {}
+    for f in item_combos_files:
+        all_item_combos.update(parse_item_combos(f))
+    
     rt_raw_data = {}
     for f in merged_files:
         _, t = parse_lsj_templates(f)
@@ -328,6 +453,8 @@ def main():
     root_template_db = {} 
     
     for rt_uuid, rt_data in rt_raw_data.items():
+        if rt_uuid == "ad65bf18-c9e9-4978-8e1e-488ef6a61f01":
+            continue
         item_type = rt_data.get("Type")
         if isinstance(item_type, dict): item_type = item_type.get("value")
         if item_type != "item": continue
@@ -343,7 +470,6 @@ def main():
         
         stats_node = rt_data.get("Stats")
         stats_id = stats_node.get("value") if isinstance(stats_node, dict) else stats_node
-        
         book_id = extract_book_id(rt_data)
 
         root_template_db[rt_uuid] = {
@@ -364,9 +490,10 @@ def main():
         "name": None,
         "stats_id": None, 
         "description": None, 
-        "locations": set(), # Will now store (loc_str, uuid)
+        "locations": set(), 
         "root_template_uuid": None,
-        "book_id": None
+        "book_id": None,
+        "properties": []
     })
 
     for rt_uuid, db_entry in root_template_db.items():
@@ -382,30 +509,28 @@ def main():
         page_entry["description"] = db_entry["description"]
         page_entry["book_id"] = db_entry["book_id"]
         
-        # Store specific UUID with location
         if rt_uuid in template_loc_map:
             for loc in template_loc_map[rt_uuid]:
                 page_entry["locations"].add((loc, rt_uuid))
 
-        # Container spawns based on Stats ID are generic; use None for UUID
         s_id = db_entry["stats_id"]
         if s_id and s_id in container_loc_map:
             for loc in container_loc_map[s_id]:
                 page_entry["locations"].add((loc, None))
                 
-        stats = resolved_all_stats[db_entry["stats_id"]] if db_entry["stats_id"] in resolved_all_stats else None
-        properties = []
+        stats = resolved_all_stats.get(s_id)
         if s_id:
-            for combo_uuid, combo_data in combos.items():
-                for combo in combo_data:
-                    if combo["Type"] == "Object" and combo["ObjectID"] == s_id:
-                        properties.append(combo_uuid)
-                    if stats and combo["Type"] == "Category":
-                        if combo["ObjectID"] in stats.get("ComboCategory", ""):
-                            properties.append(combo_uuid)
-        if properties:
-            page_entry["properties"] = properties
-            
+            for prop_uuid, prop_info in combo_props.items():
+                entries = prop_info.get("entries", [])
+                for prop_entry in entries:
+                    p_type = prop_entry.get("Type")
+                    p_id = prop_entry.get("ObjectID")
+                    if p_type == "Object" and p_id == s_id:
+                        page_entry["properties"].append(prop_uuid)
+                    if stats and p_type == "Category":
+                        cats = stats.get("ComboCategory", "").split(";")
+                        if p_id in cats:
+                            page_entry["properties"].append(prop_uuid)
 
     for safe_name, var_data in unique_variants.items():
         page_entry = pages_to_write[safe_name]
@@ -422,7 +547,6 @@ def main():
              if parent_uuid in root_template_db:
                  page_entry["description"] = root_template_db[parent_uuid]["description"]
 
-        # Store variant UUID with location
         u_uuid = var_data["root_template_uuid"]
         for loc in var_data["locations"]:
             page_entry["locations"].add((loc, u_uuid))
@@ -435,15 +559,19 @@ def main():
         stats_id = data["stats_id"] or "Unknown"
         description = data["description"]
         book_id = data["book_id"]
-        # Use the page header UUID as a fallback/primary
         page_header_uuid = data["root_template_uuid"] or ""
         properties = data.get("properties", [])
+        
+        item_categories = []
+        if stats_id in resolved_all_stats:
+            cat_str = resolved_all_stats[stats_id].get("ComboCategory", "")
+            if cat_str:
+                item_categories = [c.strip() for c in cat_str.split(",") if c.strip()]
 
-        # locations is now a set of tuples
         raw_locations = sorted(list(data["locations"]))
         grouped_locations = parse_and_group_locations(raw_locations)
 
-        fname = f"{safe_name}.wikitext"
+        fname = f"{safe_name}.txt"
         path = os.path.join(args.outdir, fname)
 
         template = "InfoboxItem"
@@ -452,7 +580,7 @@ def main():
         elif stats_id in resolved_weapon_stats:
             template = "InfoboxWeapon"
         elif stats_id in resolved_armor_stats:
-            template = "InfoboxArmor"
+            template = "InfoboxArmour"
         
         content = f"{{{{{template}\n|name={real_name}\n|stats_id={stats_id}\n|root_template_uuid={page_header_uuid}"
 
@@ -461,13 +589,12 @@ def main():
             content += f"\n|description={safe_desc}"
         
         if properties:
-            props_str = ",".join(properties)
+            props_str = ",".join(set(properties))
             content += f"\n|properties={props_str}"
         
         content += "\n}}\n"
         
         if book_id:
-            book_text = None
             if book_id in loc_map:
                 book_text = loc_map[book_id]
             elif book_id in uuid_map:
@@ -496,20 +623,31 @@ def main():
 
         if grouped_locations:
             content += "\n== Locations ==\n"
-            # Keys are now (region, loc_name, uuid)
             sorted_keys = sorted(grouped_locations.keys())
             
             for (region, loc_name, specific_uuid) in sorted_keys:
                 coords_list = grouped_locations[(region, loc_name, specific_uuid)]
                 coords_str = ";".join(coords_list)
-                
-                # If specific UUID is present, use it. Otherwise use the page default.
                 uuid_to_use = specific_uuid if specific_uuid else page_header_uuid
-                
                 content += f"{{{{ItemLocation|stats_id={stats_id}|root_template_uuid={uuid_to_use}|region={region}|location_name={loc_name}|coordinates={coords_str}}}}}\n"
             
-            content += "\n{{LocationTable|table=Items}}\n"
+            content += "\n{{ItemLocationTable}}\n"
+
+        if stats_id and stats_id != "Unknown":
+            creation_table, product_table = generate_crafting_wikitext(
+                stats_id, item_categories, properties, all_item_combos, loc_map, uuid_map, resolved_all_stats, combo_props, category_previews
+            )
             
+            if creation_table:
+                content += "\n== Crafting ==\n"
+                content += creation_table + "\n"
+            
+            if product_table:
+                if not creation_table:
+                     content += "\n== Crafting ==\n"
+                content += "\n=== Used in ===\n"
+                content += product_table + "\n"
+
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
         count += 1

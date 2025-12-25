@@ -53,11 +53,45 @@ def parse_item_combos(filepath):
 
     return all_combos
 
+def parse_object_category_previews(filepath):
+    regex_preview = re.compile(r'new CraftingPreviewData "(.+?)"')
+    regex_data = re.compile(r'data "(.+?)" "(.*?)"')
+    
+    previews = {}
+    current_category = None
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                
+                match_preview = regex_preview.match(line)
+                if match_preview:
+                    current_category = match_preview.group(1)
+                    previews[current_category] = {}
+                    continue
+                
+                match_data = regex_data.match(line)
+                if match_data and current_category:
+                    key = match_data.group(1)
+                    val = match_data.group(2)
+                    previews[current_category][key] = val
+                    continue
+    except Exception as e:
+        print(f"Error parsing {filepath}: {e}")
+        
+    return previews
+
 def parse_item_combo_properties(filepath):
     regex_property = re.compile(r'new ItemComboProperty "(.+?)"')
     regex_entry = re.compile(r'new ItemComboPropertyEntry')
     regex_data = re.compile(r'data "(.+?)" "(.*?)"')
+    
+    # Structure: { "Oil": { "entries": [], "data": { "PreviewIcon": "...", ... } } }
     all_properties = {}
+    current_prop_id = None
+    
     try:
         with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
@@ -66,22 +100,33 @@ def parse_item_combo_properties(filepath):
                 
                 match_property = regex_property.match(line)
                 if match_property:
-                    property_id = match_property.group(1)
-                    all_properties[property_id] = []
+                    current_prop_id = match_property.group(1)
+                    all_properties[current_prop_id] = {
+                        "entries": [],
+                        "data": {}
+                    }
                     continue
                 
                 match_entry = regex_entry.match(line)
-                if match_entry:
-                    current_entry = {}
-                    all_properties[property_id].append(current_entry)
+                if match_entry and current_prop_id:
+                    # Append a new empty dict for this entry
+                    all_properties[current_prop_id]["entries"].append({})
                     continue
                     
                 match_data = regex_data.match(line)
-                if match_data and all_properties[property_id]:
+                if match_data and current_prop_id:
                     key = match_data.group(1)
                     val = match_data.group(2)
-                    all_properties[property_id][-1][key] = val
+                    
+                    entries = all_properties[current_prop_id]["entries"]
+                    if entries:
+                        # If we have entries, add data to the last entry
+                        entries[-1][key] = val
+                    else:
+                        # If no entries yet, it's top-level property data (Icons/Tooltips)
+                        all_properties[current_prop_id]["data"][key] = val
                     continue
+
     except Exception as e:
         print(f"Error parsing {filepath}: {e}")
     return all_properties

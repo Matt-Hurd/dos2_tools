@@ -31,9 +31,10 @@ def get_config():
             "root_templates_lsj": ["Public/**/RootTemplates/*.lsj"],
             "skills": ["Public/**/Stats/Generated/Data/Skill*.txt"],
             "level_characters": ["Mods/**/Levels/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/_merged.lsj", "Mods/**/Globals/**/Characters/**.lsj", "Mods/**/Levels/**/Characters/**.lsj"],
-            "level_items": ["Mods/**/Levels/**/Items/_merged.lsj", "Mods/**/Globals/**/Items/_merged.lsj"],
+            "level_items": ["Mods/**/Levels/**/Items/*.lsj", "Mods/**/Globals/**/Items/*.lsj"],
             "recipes": ["Mods/**/Story/Journal/recipes_prototypes.lsj"],
-            "item_combo_properties": ["Public/Shared/Stats/Generated/ItemComboProperties.txt"],
-            "item_combos": ["Public/Shared/Stats/Generated/ItemCombos.txt"],
+            "item_combo_properties": ["Public/**/Stats/Generated/ItemComboProperties.txt"],
+            "item_combos": ["Public/**/Stats/Generated/ItemCombos.txt"],
+            "object_categories_item_combos": ["Public/**/Stats/Generated/ObjectCategoriesItemComboPreviewData.txt"],
         }
     }
