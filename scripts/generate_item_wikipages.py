@@ -80,10 +80,13 @@ def resolve_node_name(node_data, loc_map, uuid_map):
 
     return None
 
-def extract_book_id(node_data):
+def extract_action_data(node_data):
+    book_id = None
+    direct_recipes = []
+    
     actions = node_data.get("OnUsePeaceActions")
     if not actions:
-        return None
+        return None, []
     
     if isinstance(actions, list):
         for action_block in actions:
@@ -93,16 +96,28 @@ def extract_book_id(node_data):
                 
             for act in action_list:
                 a_type = act.get("ActionType", {})
-                if isinstance(a_type, dict) and a_type.get("value") == 11:
-                    attributes = act.get("Attributes", [])
-                    if not isinstance(attributes, list):
-                        attributes = [attributes]
-                    
-                    for attr in attributes:
+                type_val = -1
+                if isinstance(a_type, dict):
+                    type_val = a_type.get("value")
+                
+                attributes = act.get("Attributes", [])
+                if not isinstance(attributes, list):
+                    attributes = [attributes]
+                
+                for attr in attributes:
+                    if type_val == 11:
                         book_node = attr.get("BookId")
                         if book_node and isinstance(book_node, dict):
-                            return book_node.get("value")
-    return None
+                            book_id = book_node.get("value")
+                    elif type_val == 30:
+                        recipe_node = attr.get("RecipeID")
+                        if recipe_node and isinstance(recipe_node, dict):
+                            val = recipe_node.get("value")
+                            if val:
+                                splits = val.split(';')
+                                direct_recipes.extend([x.strip() for x in splits if x.strip()])
+                                
+    return book_id, direct_recipes
 
 def load_recipe_prototype_data(all_files, conf):
     print("Loading Recipe prototypes...")
@@ -184,12 +199,14 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
                 default_rt_name = None
                 default_rt_stats = None
                 default_book_id = None
+                default_recipes = []
 
                 if template_uuid in root_template_db:
                     rt_entry = root_template_db[template_uuid]
                     default_rt_name = rt_entry.get("name")
                     default_rt_stats = rt_entry.get("stats_id")
                     default_book_id = rt_entry.get("book_id")
+                    default_recipes = rt_entry.get("recipes", [])
 
                 if instance_name and instance_name != default_rt_name:
                     safe_var_name = sanitize_filename(instance_name)
@@ -201,7 +218,10 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
                         if not stats_val and default_rt_stats:
                             stats_val = default_rt_stats
                             
-                        current_book_id = extract_book_id(obj_data) or default_book_id
+                        current_book_id, current_recipes = extract_action_data(obj_data)
+                        
+                        final_book_id = current_book_id if current_book_id else default_book_id
+                        final_recipes = current_recipes if current_recipes else default_recipes
 
                         desc_override = None
                         desc_node = obj_data.get('Description')
@@ -215,7 +235,8 @@ def scan_levels_for_items(all_files, conf, root_template_db, loc_map, uuid_map):
                             "stats_id": stats_val,
                             "root_template_uuid": template_uuid,
                             "description": desc_override,
-                            "book_id": current_book_id,
+                            "book_id": final_book_id,
+                            "recipes": final_recipes,
                             "locations": set(),
                             "is_variant": True
                         }
@@ -322,53 +343,7 @@ def generate_crafting_wikitext(target_stats_id, target_categories, target_proper
         if not is_creation and not is_product:
             continue
 
-        row_text = "{{#invoke:CraftingRecipe|row"
-        
-        station = data.get("CraftingStation")
-        if station:
-            row_text += f"\n| station = {station}"
-
-        for i in range(1, 6):
-            obj_id = data.get(f"Object {i}")
-            obj_type = data.get(f"Type {i}")
-            transform = data.get(f"Transform {i}")
-            
-            if not obj_id: continue
-            
-            row_text += f"\n| mat{i} = {obj_id}"
-            if obj_type: row_text += f"\n| mat{i}_type = {obj_type}"
-            if transform: row_text += f"\n| mat{i}_transform = {transform}"
-            
-            name = None
-            icon = None
-            
-            if obj_type == "Object":
-                name = get_localized_text(obj_id, uuid_map, loc_map)
-            
-            elif obj_type == "Category":
-                name = obj_id
-                if obj_id in category_previews:
-                    icon_val = category_previews[obj_id].get("Icon")
-                    if icon_val: icon = f"{icon_val}_Icon.webp"
-            
-            elif obj_type == "Property":
-                name = obj_id
-                if obj_id in combo_props:
-                    icon_val = combo_props[obj_id].get("data", {}).get("PreviewIcon")
-                    if icon_val: icon = f"{icon_val}_Icon.webp"
-            
-            if name:
-                row_text += f"\n| mat{i}_name = {name}"
-            if icon:
-                row_text += f"\n| mat{i}_icon = {icon}"
-
-        if result_id:
-            row_text += f"\n| res1 = {result_id}"
-            res_name = get_localized_text(result_id, uuid_map, loc_map)
-            if res_name:
-                row_text += f"\n| res1_name = {res_name}"
-
-        row_text += "\n}}"
+        row_text = r"{{CraftingRow|%s}}" % combo_id
 
         if is_creation:
             creation_rows.append(row_text)
@@ -407,28 +382,35 @@ def main():
     
     weapon_stats_files = get_files_by_pattern(all_files, conf['patterns']['weapons'])
     armor_stats_files = get_files_by_pattern(all_files, conf['patterns']['armors'])
+    shield_stats_files = get_files_by_pattern(all_files, conf['patterns']['shields'])
     all_stats_files = get_files_by_pattern(all_files, conf['patterns']['stats'])
 
     weapon_stats = {}
-    for f in weapon_stats_files:
-        weapon_stats.update(parse_stats_txt(f))
+    for f in weapon_stats_files: weapon_stats.update(parse_stats_txt(f))
         
     armor_stats = {}
-    for f in armor_stats_files:
-        armor_stats.update(parse_stats_txt(f))
+    for f in armor_stats_files: armor_stats.update(parse_stats_txt(f))
     
     all_stats = {}
-    for f in all_stats_files:
-        all_stats.update(parse_stats_txt(f))
+    for f in all_stats_files: all_stats.update(parse_stats_txt(f))
+    
+    shield_stats = {}
+    for f in shield_stats_files: shield_stats.update(parse_stats_txt(f))
     
     combos_files = get_files_by_pattern(all_files, conf['patterns']['item_combo_properties'])
     combos = {}
-    for f in combos_files:
-        combos.update(parse_item_combo_properties(f))
+    for f in combos_files: combos.update(parse_item_combo_properties(f))
 
     resolved_armor_stats = resolve_all_stats(armor_stats)
     resolved_weapon_stats = resolve_all_stats(weapon_stats)
+    resolved_shield_stats = resolve_all_stats(shield_stats)
     resolved_all_stats = resolve_all_stats(all_stats)
+    
+    master_stats_db = {}
+    master_stats_db.update(resolved_all_stats)
+    master_stats_db.update(resolved_armor_stats)
+    master_stats_db.update(resolved_weapon_stats)
+    master_stats_db.update(resolved_shield_stats)
     
     combo_prop_files = get_files_by_pattern(all_files, conf['patterns']['item_combo_properties'])
     combo_props = {}
@@ -453,8 +435,8 @@ def main():
     root_template_db = {} 
     
     for rt_uuid, rt_data in rt_raw_data.items():
-        if rt_uuid == "ad65bf18-c9e9-4978-8e1e-488ef6a61f01":
-            continue
+        if rt_uuid == "ad65bf18-c9e9-4978-8e1e-488ef6a61f01": continue
+        
         item_type = rt_data.get("Type")
         if isinstance(item_type, dict): item_type = item_type.get("value")
         if item_type != "item": continue
@@ -470,20 +452,21 @@ def main():
         
         stats_node = rt_data.get("Stats")
         stats_id = stats_node.get("value") if isinstance(stats_node, dict) else stats_node
-        book_id = extract_book_id(rt_data)
+        
+        book_id, recipes = extract_action_data(rt_data)
 
         root_template_db[rt_uuid] = {
             "name": name,
             "stats_id": stats_id,
             "description": desc,
             "book_id": book_id,
+            "recipes": recipes,
             "raw_data": rt_data
         }
 
     template_loc_map, container_loc_map, unique_variants, all_regions = scan_levels_for_items(
         all_files, conf, root_template_db, loc_map, uuid_map
     )
-
     print("Aggregating Wiki Pages...")
     
     pages_to_write = defaultdict(lambda: {
@@ -493,44 +476,103 @@ def main():
         "locations": set(), 
         "root_template_uuid": None,
         "book_id": None,
+        "taught_recipes": [],
         "properties": []
     })
 
-    for rt_uuid, db_entry in root_template_db.items():
-        name = db_entry["name"]
-        if not name: continue
+    for stats_id, stats_data in master_stats_db.items():
+        rt_uuid = stats_data.get("RootTemplate")
+        
+        if not rt_uuid and "InventoryTab" not in stats_data:
+            continue
+
+        name = None
+        
+        if "DisplayName" in stats_data:
+            handle = stats_data["DisplayName"]
+            if handle in loc_map:
+                name = loc_map[handle]
+            elif ";" in handle:
+                clean_handle = handle.split(";")[0]
+                if clean_handle in loc_map:
+                    name = loc_map[clean_handle]
+        
+        if not name:
+            name = get_localized_text(stats_id, uuid_map, loc_map)
+        
+        if not name and rt_uuid and rt_uuid in root_template_db:
+             name = root_template_db[rt_uuid]["name"]
+        
+        if not name:
+             continue
+
+        if len(name) > 50:
+             continue
 
         safe_name = sanitize_filename(name)
         page_entry = pages_to_write[safe_name]
         
         page_entry["name"] = name
+        page_entry["stats_id"] = stats_id
         page_entry["root_template_uuid"] = rt_uuid
-        page_entry["stats_id"] = db_entry["stats_id"]
-        page_entry["description"] = db_entry["description"]
-        page_entry["book_id"] = db_entry["book_id"]
+        
+        desc = None
+        if rt_uuid and rt_uuid in root_template_db:
+            rt_entry = root_template_db[rt_uuid]
+            desc = rt_entry["description"]
+            page_entry["book_id"] = rt_entry["book_id"]
+            if rt_entry["recipes"]:
+                page_entry["taught_recipes"].extend(rt_entry["recipes"])
+        
+        page_entry["description"] = desc
+
+        if stats_id in container_loc_map:
+            for loc in container_loc_map[stats_id]:
+                page_entry["locations"].add((loc, None))
+
+        for prop_uuid, prop_info in combo_props.items():
+            entries = prop_info.get("entries", [])
+            for prop_entry in entries:
+                p_type = prop_entry.get("Type")
+                p_id = prop_entry.get("ObjectID")
+                if p_type == "Object" and p_id == stats_id:
+                    page_entry["properties"].append(prop_uuid)
+                if p_type == "Category":
+                    cats = stats_data.get("ComboCategory", "").split(";")
+                    if p_id in cats:
+                        page_entry["properties"].append(prop_uuid)
+
+    for rt_uuid, db_entry in root_template_db.items():
+        s_id = db_entry["stats_id"]
+        
+        name = db_entry["name"]
+        if not name: continue
+
+        safe_name = sanitize_filename(name)
+        
+        page_entry = pages_to_write[safe_name]
+        
+        page_entry["name"] = name
+        page_entry["root_template_uuid"] = rt_uuid
+        if not page_entry["stats_id"]:
+            page_entry["stats_id"] = s_id
+        
+        if db_entry["description"] and not page_entry["description"]:
+            page_entry["description"] = db_entry["description"]
+        
+        if db_entry["book_id"] and not page_entry["book_id"]:
+            page_entry["book_id"] = db_entry["book_id"]
+
+        if db_entry["recipes"]:
+            page_entry["taught_recipes"].extend(db_entry["recipes"])
         
         if rt_uuid in template_loc_map:
             for loc in template_loc_map[rt_uuid]:
                 page_entry["locations"].add((loc, rt_uuid))
 
-        s_id = db_entry["stats_id"]
         if s_id and s_id in container_loc_map:
             for loc in container_loc_map[s_id]:
                 page_entry["locations"].add((loc, None))
-                
-        stats = resolved_all_stats.get(s_id)
-        if s_id:
-            for prop_uuid, prop_info in combo_props.items():
-                entries = prop_info.get("entries", [])
-                for prop_entry in entries:
-                    p_type = prop_entry.get("Type")
-                    p_id = prop_entry.get("ObjectID")
-                    if p_type == "Object" and p_id == s_id:
-                        page_entry["properties"].append(prop_uuid)
-                    if stats and p_type == "Category":
-                        cats = stats.get("ComboCategory", "").split(";")
-                        if p_id in cats:
-                            page_entry["properties"].append(prop_uuid)
 
     for safe_name, var_data in unique_variants.items():
         page_entry = pages_to_write[safe_name]
@@ -539,6 +581,9 @@ def main():
         page_entry["root_template_uuid"] = var_data["root_template_uuid"]
         page_entry["stats_id"] = var_data["stats_id"]
         page_entry["book_id"] = var_data.get("book_id")
+        
+        if var_data.get("recipes"):
+            page_entry["taught_recipes"].extend(var_data["recipes"])
         
         if var_data["description"]:
             page_entry["description"] = var_data["description"]
@@ -563,8 +608,8 @@ def main():
         properties = data.get("properties", [])
         
         item_categories = []
-        if stats_id in resolved_all_stats:
-            cat_str = resolved_all_stats[stats_id].get("ComboCategory", "")
+        if stats_id in master_stats_db:
+            cat_str = master_stats_db[stats_id].get("ComboCategory", "")
             if cat_str:
                 item_categories = [c.strip() for c in cat_str.split(",") if c.strip()]
 
@@ -595,6 +640,7 @@ def main():
         content += "\n}}\n"
         
         if book_id:
+            book_text = None
             if book_id in loc_map:
                 book_text = loc_map[book_id]
             elif book_id in uuid_map:
@@ -615,11 +661,24 @@ def main():
             if book_text and isinstance(book_text, str):
                 safe_bt = book_text.replace('|', '{{!}}')
                 content += f"\n{{{{BookText|text={safe_bt}}}}}\n"
-            
-            if book_id in recipe_proto_db:
-                recipes = recipe_proto_db[book_id]
-                for r in recipes:
-                    content += f"\n{{{{BookTeaches|recipe={r}}}}}\n"
+        
+        final_recipe_list = set()
+        
+        if book_id and book_id in recipe_proto_db:
+            for r in recipe_proto_db[book_id]:
+                final_recipe_list.add(r)
+        
+        if data.get("taught_recipes"):
+            for r_id in data["taught_recipes"]:
+                if r_id in recipe_proto_db:
+                    for sub_r in recipe_proto_db[r_id]:
+                        final_recipe_list.add(sub_r)
+                else:
+                    final_recipe_list.add(r_id)
+
+        if final_recipe_list:
+            for r in sorted(list(final_recipe_list)):
+                content += f"\n{{{{BookTeaches|recipe={r}}}}}\n"
 
         if grouped_locations:
             content += "\n== Locations ==\n"
@@ -632,10 +691,12 @@ def main():
                 content += f"{{{{ItemLocation|stats_id={stats_id}|root_template_uuid={uuid_to_use}|region={region}|location_name={loc_name}|coordinates={coords_str}}}}}\n"
             
             content += "\n{{ItemLocationTable}}\n"
+        
+        content = ""
 
         if stats_id and stats_id != "Unknown":
             creation_table, product_table = generate_crafting_wikitext(
-                stats_id, item_categories, properties, all_item_combos, loc_map, uuid_map, resolved_all_stats, combo_props, category_previews
+                stats_id, item_categories, properties, all_item_combos, loc_map, uuid_map, master_stats_db, combo_props, category_previews
             )
             
             if creation_table:
@@ -645,12 +706,13 @@ def main():
             if product_table:
                 if not creation_table:
                      content += "\n== Crafting ==\n"
-                content += "\n=== Used in ===\n"
+                content += "=== Used in ===\n"
                 content += product_table + "\n"
 
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        count += 1
+        if content:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            count += 1
 
 if __name__ == "__main__":
     main()
