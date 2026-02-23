@@ -1,47 +1,303 @@
+"""
+Parsers for DOS2 game data file formats.
+
+Handles parsing of:
+  - Stats .txt files (Armor, Weapon, Object, Potion, Skill, etc.)
+  - LSJ (JSON) files (root templates, level data, localization)
+  - XML localization files (english.xml)
+  - Item combo files (crafting recipes)
+  - Item progression files (names and visuals)
+  - Object category preview data
+"""
+
 import re
 import json
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 
+from dos2_tools.core.config import GIFTBAG_MAP
+from dos2_tools.core.data_models import LSJNode
+
+
+# ─── Stats (.txt) Parsing ───────────────────────────────────────────────────
+
+def parse_stats_txt(filepath):
+    """
+    Parse a DOS2 stats text file (Armor.txt, Weapon.txt, Object.txt, etc.).
+
+    Returns a dict of entry_id -> {_id, _type, _using, _data: OrderedDict}.
+    Inheritance (_using) is NOT resolved here — see stats_engine.resolve_all_stats().
+    """
+    regex_entry = re.compile(r'new entry "(.+?)"')
+    regex_using = re.compile(r'using "(.+?)"')
+    regex_data = re.compile(r'data "(.+?)" "(.*?)"')
+    regex_type = re.compile(r'type "(.+?)"')
+
+    all_entries = {}
+    current_entry = None
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+
+                match = regex_entry.match(line)
+                if match:
+                    entry_id = match.group(1)
+                    current_entry = {"_id": entry_id, "_data": OrderedDict()}
+                    all_entries[entry_id] = current_entry
+                    continue
+
+                if not current_entry:
+                    continue
+
+                match = regex_using.match(line)
+                if match:
+                    current_entry["_using"] = match.group(1)
+                    continue
+
+                match = regex_data.match(line)
+                if match:
+                    current_entry["_data"][match.group(1)] = match.group(2)
+                    continue
+
+                match = regex_type.match(line)
+                if match:
+                    current_entry["_type"] = match.group(1)
+                    continue
+    except Exception as e:
+        print(f"Error parsing {filepath}: {e}")
+
+    return all_entries
+
+
+# ─── LSJ (JSON) Parsing ────────────────────────────────────────────────────
+
+def parse_lsj(filepath):
+    """Parse a .lsj JSON file. Returns the parsed dict or None on error."""
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def parse_lsj_templates(filepath):
+    """
+    Parse an LSJ file containing RootTemplates/GameObjects.
+
+    Handles both the "save.regions.Templates.GameObjects" format and
+    the "region.node.children.node" format.
+
+    Returns:
+        tuple[dict, dict]: (by_stats_id, by_map_key) — two indexes into
+        the same underlying game objects.
+    """
+    data = parse_lsj(filepath)
+    if not data:
+        return {}, {}
+
+    by_stats = {}
+    by_map_key = {}
+
+    root = LSJNode(data)
+
+    # Try format 1: save.regions.Templates.GameObjects
+    game_objects = (
+        root.get_node("save")
+        .get_node("regions")
+        .get_node("Templates")
+        .get_raw("GameObjects", [])
+    )
+
+    # Try format 2: region.node.children.node
+    if not game_objects:
+        for n in root.get_node("region").get_node("node").get_node("children").get_list("node"):
+            if n.get_value("id") == "GameObjects":
+                game_objects = n.get_node("children").get_raw("node", [])
+                break
+
+    if isinstance(game_objects, dict):
+        game_objects = [game_objects]
+    if not isinstance(game_objects, list):
+        game_objects = []
+
+    for go_raw in game_objects:
+        go = LSJNode(go_raw)
+        obj = _extract_game_object(go)
+        if not obj:
+            continue
+
+        stats_id = obj.get("Stats")
+        map_key = obj.get("MapKey")
+
+        if stats_id:
+            by_stats[stats_id] = obj
+        if map_key:
+            by_map_key[map_key] = obj
+
+    return by_stats, by_map_key
+
+
+def _extract_game_object(go):
+    """
+    Extract relevant fields from a raw GameObjects node.
+
+    Handles both direct-property and attribute-list LSJ formats.
+    """
+    map_key = go.get_value("MapKey")
+    stats_id = go.get_value("Stats")
+    template_name = go.get_value("TemplateName")
+    icon = go.get_value("Icon")
+    description = go.get_raw("Description")
+    display_name = go.get_raw("DisplayName")
+
+    # Attribute-list fallback (older LSJ format)
+    for attr in go.get_list("attribute"):
+        aid = attr.get_value("id")
+        if not map_key and aid == "MapKey":
+            map_key = attr.get_value("value")
+        if not stats_id and aid == "Stats":
+            stats_id = attr.get_value("value")
+        if not description and aid == "Description":
+            description = attr.raw
+        if not display_name and aid == "DisplayName":
+            display_name = attr.raw
+        if not icon and aid == "Icon":
+            icon = attr.get_value("value")
+
+    if not map_key and not stats_id:
+        return None
+
+    obj = {}
+    if map_key:
+        obj["MapKey"] = map_key
+    if stats_id:
+        obj["Stats"] = stats_id
+    if template_name:
+        obj["TemplateName"] = template_name
+    if icon:
+        obj["Icon"] = icon
+    if description:
+        obj["Description"] = description
+    if display_name:
+        obj["DisplayName"] = display_name
+
+    # Trade treasures
+    for tt in go.get_list("TradeTreasures"):
+        val = tt.get_value("TreasureItem")
+        if val:
+            obj.setdefault("TradeTreasures", []).append(val)
+
+    # Treasures
+    for t in go.get_list("Treasures"):
+        val = t.get_value("TreasureItem")
+        if val:
+            obj.setdefault("Treasures", []).append(val)
+
+    # Passthrough fields — keep raw for downstream LSJNode wrapping
+    for key in (
+        "SkillList", "LevelOverride", "Transform", "Tags",
+        "DefaultState", "Type", "ItemList", "OnUsePeaceActions", "InventoryList",
+        "Name",
+    ):
+        val = go.get_raw(key)
+        if val is not None:
+            if key in ("DefaultState", "Type"):
+                val = go.get_value(key)
+            obj[key] = val
+
+    # Extract SkillID from OnUsePeaceActions
+    if go.has("OnUsePeaceActions"):
+        skill_id = go.deep_find_value("SkillID")
+        if skill_id:
+            obj["SkillID"] = skill_id
+
+    return obj
+
+
+# ─── XML Localization ───────────────────────────────────────────────────────
+
+def parse_xml_localization(filepath):
+    """
+    Parse an english.xml localization file.
+
+    Returns a dict of content_uid -> localized_text.
+    """
+    handle_map = {}
+    if not filepath:
+        return handle_map
+
+    try:
+        context = ET.iterparse(filepath, events=("end",))
+        for event, elem in context:
+            if elem.tag == "content":
+                uid = elem.get("contentuid")
+                text = elem.text or ""
+                if uid:
+                    handle_map[uid] = text
+                elem.clear()
+    except ET.ParseError:
+        pass
+    return handle_map
+
+
+# ─── Item Combos (Crafting) ─────────────────────────────────────────────────
+
 def parse_item_combos(filepath):
+    """
+    Parse an ItemCombos.txt file (crafting recipes).
+
+    Returns an OrderedDict of combo_id -> combo data, including
+    gift bag attribution based on the file path.
+    """
     regex_combo = re.compile(r'new ItemCombination "(.+?)"')
     regex_result = re.compile(r'new ItemCombinationResult "(.+?)"')
     regex_data = re.compile(r'data "(.+?)" "(.*?)"')
+
+    # Detect gift bag from file path
+    giftbag_name = None
+    for gb_key, gb_label in GIFTBAG_MAP.items():
+        if gb_key in filepath:
+            giftbag_name = gb_label
+            break
 
     all_combos = OrderedDict()
     current_combo = None
     parsing_results = False
 
     try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
-                if not line: continue
+                if not line:
+                    continue
 
-                match_combo = regex_combo.match(line)
-                if match_combo:
-                    combo_id = match_combo.group(1)
+                match = regex_combo.match(line)
+                if match:
+                    combo_id = match.group(1)
                     current_combo = {
-                        "ID": combo_id, 
-                        "Data": OrderedDict(), 
-                        "Results": OrderedDict()
+                        "ID": combo_id,
+                        "Data": OrderedDict(),
+                        "Results": OrderedDict(),
+                        "Giftbag": giftbag_name,
                     }
                     all_combos[combo_id] = current_combo
                     parsing_results = False
                     continue
 
-                match_result = regex_result.match(line)
-                if match_result:
+                match = regex_result.match(line)
+                if match:
                     if current_combo:
                         parsing_results = True
-                        current_combo["ResultID"] = match_result.group(1)
+                        current_combo["ResultID"] = match.group(1)
                     continue
 
-                match_data = regex_data.match(line)
-                if match_data and current_combo:
-                    key = match_data.group(1)
-                    val = match_data.group(2)
-                    
+                match = regex_data.match(line)
+                if match and current_combo:
+                    key, val = match.group(1), match.group(2)
                     if parsing_results:
                         current_combo["Results"][key] = val
                     else:
@@ -53,320 +309,145 @@ def parse_item_combos(filepath):
 
     return all_combos
 
+
 def parse_object_category_previews(filepath):
+    """Parse ObjectCategoriesItemComboPreviewData.txt."""
     regex_preview = re.compile(r'new CraftingPreviewData "(.+?)"')
     regex_data = re.compile(r'data "(.+?)" "(.*?)"')
-    
+
     previews = {}
     current_category = None
-    
+
     try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
-                if not line: continue
-                
-                match_preview = regex_preview.match(line)
-                if match_preview:
-                    current_category = match_preview.group(1)
+                if not line:
+                    continue
+
+                match = regex_preview.match(line)
+                if match:
+                    current_category = match.group(1)
                     previews[current_category] = {}
                     continue
-                
-                match_data = regex_data.match(line)
-                if match_data and current_category:
-                    key = match_data.group(1)
-                    val = match_data.group(2)
-                    previews[current_category][key] = val
+
+                match = regex_data.match(line)
+                if match and current_category:
+                    previews[current_category][match.group(1)] = match.group(2)
                     continue
     except Exception as e:
         print(f"Error parsing {filepath}: {e}")
-        
+
     return previews
 
+
 def parse_item_combo_properties(filepath):
+    """Parse ItemComboProperties.txt."""
     regex_property = re.compile(r'new ItemComboProperty "(.+?)"')
-    regex_entry = re.compile(r'new ItemComboPropertyEntry')
+    regex_entry = re.compile(r"new ItemComboPropertyEntry")
     regex_data = re.compile(r'data "(.+?)" "(.*?)"')
-    
-    # Structure: { "Oil": { "entries": [], "data": { "PreviewIcon": "...", ... } } }
+
     all_properties = {}
     current_prop_id = None
-    
+
     try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
-                if not line: continue
-                
-                match_property = regex_property.match(line)
-                if match_property:
-                    current_prop_id = match_property.group(1)
+                if not line:
+                    continue
+
+                match = regex_property.match(line)
+                if match:
+                    current_prop_id = match.group(1)
                     all_properties[current_prop_id] = {
                         "entries": [],
-                        "data": {}
+                        "data": {},
                     }
                     continue
-                
-                match_entry = regex_entry.match(line)
-                if match_entry and current_prop_id:
-                    # Append a new empty dict for this entry
+
+                match = regex_entry.match(line)
+                if match and current_prop_id:
                     all_properties[current_prop_id]["entries"].append({})
                     continue
-                    
-                match_data = regex_data.match(line)
-                if match_data and current_prop_id:
-                    key = match_data.group(1)
-                    val = match_data.group(2)
-                    
+
+                match = regex_data.match(line)
+                if match and current_prop_id:
+                    key, val = match.group(1), match.group(2)
                     entries = all_properties[current_prop_id]["entries"]
                     if entries:
-                        # If we have entries, add data to the last entry
                         entries[-1][key] = val
                     else:
-                        # If no entries yet, it's top-level property data (Icons/Tooltips)
                         all_properties[current_prop_id]["data"][key] = val
                     continue
-
     except Exception as e:
         print(f"Error parsing {filepath}: {e}")
+
     return all_properties
 
-def parse_stats_txt(filepath):
-    regex_entry = re.compile(r'new entry "(.+?)"')
-    regex_using = re.compile(r'using "(.+?)"')
-    regex_data = re.compile(r'data "(.+?)" "(.*?)"')
-    regex_type = re.compile(r'type "(.+?)"') 
-    
-    all_entries = {}
-    current_entry = None
 
-    try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                
-                match_entry = regex_entry.match(line)
-                if match_entry:
-                    entry_id = match_entry.group(1)
-                    current_entry = {"_id": entry_id, "_data": OrderedDict()}
-                    all_entries[entry_id] = current_entry
-                    continue
-                    
-                if not current_entry: continue
-                    
-                match_using = regex_using.match(line)
-                if match_using:
-                    current_entry["_using"] = match_using.group(1)
-                    continue
-                    
-                match_data = regex_data.match(line)
-                if match_data:
-                    key = match_data.group(1)
-                    val = match_data.group(2)
-                    current_entry["_data"][key] = val
-                    continue
-
-                match_type = regex_type.match(line)
-                if match_type:
-                    current_entry["_type"] = match_type.group(1)
-                    continue
-    except Exception as e:
-        print(f"Error parsing {filepath}: {e}")
-
-    return all_entries
-
-def parse_lsj(filepath):
-    try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
-
-def parse_xml_localization(filepath):
-    handle_map = {}
-    if not filepath: return handle_map
-    
-    try:
-        context = ET.iterparse(filepath, events=('end',))
-        for event, elem in context:
-            if elem.tag == 'content':
-                uid = elem.get('contentuid')
-                text = elem.text or ""
-                if uid:
-                    handle_map[uid] = text
-                elem.clear()
-    except ET.ParseError:
-        pass
-    return handle_map
+# ─── Item Progression ───────────────────────────────────────────────────────
 
 def parse_item_progression_names(filepath):
+    """Parse ItemProgressionNames.txt (name groups for items)."""
     name_groups = {}
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             current_group = None
             for line in f:
                 line = line.strip()
-                match_group = re.search(r'new namegroup "(.*?)"', line)
-                if match_group:
-                    current_group = match_group.group(1)
+                match = re.search(r'new namegroup "(.*?)"', line)
+                if match:
+                    current_group = match.group(1)
                     name_groups[current_group] = {}
                     continue
-                
-                if current_group and line.startswith('add name'):
-                    match_name = re.search(r'add name "(.*?)","(.*?)"', line)
-                    if match_name:
-                        name_groups[current_group]['name'] = match_name.group(1)
-                        name_groups[current_group]['description'] = match_name.group(2)
+
+                if current_group and line.startswith("add name"):
+                    match = re.search(r'add name "(.*?)","(.*?)"', line)
+                    if match:
+                        name_groups[current_group]["name"] = match.group(1)
+                        name_groups[current_group]["description"] = match.group(2)
     except FileNotFoundError:
         pass
     return name_groups
 
+
 def parse_item_progression_visuals(filepath):
+    """Parse ItemProgressionVisuals.txt (visual root groups for items)."""
     item_groups = {}
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             current_group = None
             for line in f:
                 line = line.strip()
-                match_group = re.search(r'new itemgroup "(.*?)"', line)
-                if match_group:
-                    current_group = match_group.group(1)
+                match = re.search(r'new itemgroup "(.*?)"', line)
+                if match:
+                    current_group = match.group(1)
                     item_groups[current_group] = {}
                     continue
-                
-                if current_group and line.startswith('add rootgroup'):
-                    match_root = re.search(r'add rootgroup "(.*?)","(.*?)"', line)
-                    if match_root:
-                        item_groups[current_group]['rootgroup'] = match_root.group(1)
+
+                if current_group and line.startswith("add rootgroup"):
+                    match = re.search(r'add rootgroup "(.*?)","(.*?)"', line)
+                    if match:
+                        item_groups[current_group]["rootgroup"] = match.group(1)
     except FileNotFoundError:
         pass
     return item_groups
 
-def _find_skill_id_deep(data):
-    if isinstance(data, dict):
-        if "SkillID" in data:
-            val_obj = data["SkillID"]
-            if isinstance(val_obj, dict):
-                return val_obj.get("value")
-            return val_obj 
-        
-        if data.get("id") == "SkillID" and "value" in data:
-            return data["value"]
 
-        for v in data.values():
-            found = _find_skill_id_deep(v)
-            if found: return found
+# ─── Treasure Tables ────────────────────────────────────────────────────────
 
-    elif isinstance(data, list):
-        for item in data:
-            found = _find_skill_id_deep(item)
-            if found: return found
-            
-    return None
+def parse_treasure_table(filepath):
+    """
+    Parse a TreasureTable.txt file.
 
-def parse_lsj_templates(filepath):
-    data = parse_lsj(filepath)
-    if not data: return {}, {}
-    
-    by_stats = {}
-    by_map_key = {}
-
-    game_objects = data.get("save", {}).get("regions", {}).get("Templates", {}).get("GameObjects", [])
-    
-    if not game_objects:
-        root_nodes = data.get("region", {}).get("node", {}).get("children", {}).get("node", [])
-        if isinstance(root_nodes, dict): root_nodes = [root_nodes]
-        for n in root_nodes:
-            if n.get('id') == 'GameObjects':
-                game_objects = n.get("children", {}).get("node", [])
-                break
-
-    if isinstance(game_objects, dict): game_objects = [game_objects]
-
-    for go in game_objects:
-        map_key = go.get("MapKey", {}).get("value")
-        stats_id = go.get("Stats", {}).get("value")
-        skill_list = go.get("SkillList", [])
-        template_name = go.get("TemplateName", {}).get("value")
-        
-        description = go.get("Description")
-        display_name = go.get("DisplayName")
-        trade_treasures = go.get("TradeTreasures")
-        tts = []
-        if trade_treasures:
-            for tt in trade_treasures:
-                ttem = tt.get("TreasureItem")
-                if ttem:
-                    tts.append(ttem.get("value"))
-
-        treasures = go.get("Treasures")
-        ts = []
-        if treasures:
-            for t in treasures:
-                tem = t.get("TreasureItem")
-                if tem:
-                    ts.append(tem.get("value"))
-
-        icon = go.get("Icon", {}).get("value")
-
-        if "attribute" in go:
-            attrs = go["attribute"]
-            if isinstance(attrs, dict): attrs = [attrs]
-            for a in attrs:
-                aid = a.get("id")
-                if not map_key and aid == "MapKey": map_key = a.get("value")
-                if not stats_id and aid == "Stats": stats_id = a.get("value")
-                if not description and aid == "Description": description = a
-                if not display_name and aid == "DisplayName": display_name = a
-                if not icon and aid == "Icon": icon = a.get("value")
-
-        if not map_key and not stats_id:
-            continue
-
-        final_obj = {}
-        if map_key:
-            final_obj["MapKey"] = map_key
-        if stats_id:
-            final_obj["Stats"] = stats_id
-        if description:
-            final_obj["Description"] = description
-        if display_name:
-            final_obj["DisplayName"] = display_name
-        if icon:
-            final_obj["Icon"] = icon
-        if tts:
-            final_obj["TradeTreasures"] = tts
-        if ts:
-            final_obj["Treasures"] = ts
-        if skill_list:
-            final_obj["SkillList"] = skill_list
-        if template_name:
-            final_obj["TemplateName"] = template_name
-        if go.get("LevelOverride"):
-            final_obj["LevelOverride"] = go.get("LevelOverride")
-        if go.get("Transform"):
-            final_obj["Transform"] = go.get("Transform")
-        if go.get("Tags"):
-            final_obj["Tags"] = go.get("Tags")
-        if go.get("DefaultState"):
-            final_obj["DefaultState"] = go.get("DefaultState").get("value")
-        if go.get("Type"):
-            final_obj["Type"] = go.get("Type").get("value")
-        if go.get("ItemList"):
-            final_obj["ItemList"] = go.get("ItemList")
-        if go.get("OnUsePeaceActions"):
-            final_obj["OnUsePeaceActions"] = go.get("OnUsePeaceActions")
-        if go.get("InventoryList"):
-            final_obj["InventoryList"] = go.get("InventoryList")
-
-        peace_actions = go.get("OnUsePeaceActions")
-        if peace_actions:
-            skill_id = _find_skill_id_deep(peace_actions)
-            if skill_id:
-                final_obj["SkillID"] = skill_id
-
-        if stats_id: by_stats[stats_id] = final_obj
-        if map_key: by_map_key[map_key] = final_obj
-
-    return by_stats, by_map_key
+    Returns the raw text content for processing by the loot engine,
+    since treasure tables use a CSV-like format that requires
+    stateful multi-line parsing best handled by TreasureParser.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception as e:
+        print(f"Error reading {filepath}: {e}")
+        return ""

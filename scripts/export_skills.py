@@ -1,63 +1,76 @@
+"""
+Export skill stub wiki pages.
+
+Thin CLI using GameData(). Ported from export_skills.py.
+Writes one .wikitext file per unique skill with an InfoboxSkill template stub.
+
+Usage:
+    python3 -m dos2_tools.scripts.export_skills
+    python3 -m dos2_tools.scripts.export_skills --outdir skill_wikitext
+"""
+
 import os
 import argparse
-from dos2_tools.core.config import get_config
-from dos2_tools.core.file_system import resolve_load_order, get_files_by_pattern
-from dos2_tools.core.parsers import parse_stats_txt, parse_xml_localization
-from dos2_tools.core.stats_engine import resolve_all_stats
-from dos2_tools.core.localization import scan_lsj_for_uuids, get_localized_text
-from dos2_tools.core.formatters import sanitize_filename, to_wikitext_infobox
+
+from dos2_tools.core.game_data import GameData
+from dos2_tools.core.formatters import sanitize_filename
+
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--outdir", default="skill_wikitext")
+    parser = argparse.ArgumentParser(
+        description="Export skill stub wiki pages"
+    )
+    parser.add_argument(
+        "--outdir", default="skill_wikitext",
+        help="Output directory for .wikitext files"
+    )
+    parser.add_argument(
+        "--refresh-loc", action="store_true",
+        help="Force rebuild of localization cache"
+    )
     args = parser.parse_args()
-    
-    if not os.path.exists(args.outdir):
-        os.makedirs(args.outdir)
 
-    conf = get_config()
-    all_files = resolve_load_order(conf['base_path'], conf['cache_file'])
-    
-    xml_files = get_files_by_pattern(all_files, conf['patterns']['localization_xml'])
-    loc_map = {}
-    for xf in xml_files:
-        loc_map.update(parse_xml_localization(xf))
-        
-    uuid_map = scan_lsj_for_uuids(all_files)
-    
-    skill_files = get_files_by_pattern(all_files, conf['patterns']['skills'])
-    raw_stats = {}
-    for sf in skill_files:
-        raw_stats.update(parse_stats_txt(sf))
-        
-    resolved = resolve_all_stats(raw_stats)
-    
+    os.makedirs(args.outdir, exist_ok=True)
+
+    game = GameData(refresh_loc=args.refresh_loc)
+    loc = game.localization
+
+    # Filter to skill stats entries
+    skill_stats = {
+        k: v for k, v in game.stats.items()
+        if v.get("_type", "").lower() in ("skill", "skilldata")
+        or "DisplayName" in v
+        and v.get("_type", "") not in ("Object", "Armor", "Weapon", "Shield")
+    }
+
     count = 0
     seen_names = set()
-    
-    for skill_id, data in resolved.items():
+
+    for skill_id, data in sorted(skill_stats.items()):
         raw_dn = data.get("DisplayName")
-        if not raw_dn: continue
-        
-        name = get_localized_text(raw_dn, uuid_map, loc_map)
-        if not name: continue
-        
+        if not raw_dn:
+            continue
+
+        # Try resolving via localization
+        name = loc.get_text(raw_dn)
+        if not name:
+            continue
+
         safe_name = sanitize_filename(name)
-        if safe_name in seen_names: continue
+        if not safe_name or safe_name in seen_names:
+            continue
         seen_names.add(safe_name)
-        
-        fname = f"{safe_name}.wikitext"
-        path = os.path.join(args.outdir, fname)
-        
-        params = {"skill_id": skill_id}
-        content = to_wikitext_infobox("InfoboxSkill", params)
-        content += f"\n\n{{{{SkillFooter|skill_id={skill_id}}}}}"
-        
-        with open(path, 'w', encoding='utf-8') as f:
+
+        content = f"{{{{InfoboxSkill|skill_id={skill_id}}}}}\n\n"
+        content += f"{{{{SkillFooter|skill_id={skill_id}}}}}\n"
+
+        path = os.path.join(args.outdir, f"{safe_name}.wikitext")
+        with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         count += 1
-        
-    print(f"Generated {count} skill pages.")
+
+    print(f"Generated {count} skill pages in {args.outdir}/")
+
 
 if __name__ == "__main__":
     main()

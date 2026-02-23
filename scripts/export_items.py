@@ -1,104 +1,94 @@
+"""
+Export DOS2 items to JSON.
+
+Thin CLI using GameData(). Exports unique items with display names,
+stats info, root template UUIDs, and version provenance.
+
+Usage:
+    python3 -m dos2_tools.scripts.export_items
+    python3 -m dos2_tools.scripts.export_items --out unique_items.json --all
+"""
+
 import json
-from dos2_tools.core.config import get_config
-from dos2_tools.core.file_system import resolve_load_order, get_files_by_pattern
-from dos2_tools.core.parsers import (
-    parse_stats_txt, parse_lsj, parse_xml_localization,
-    parse_item_progression_names, parse_item_progression_visuals, parse_lsj_templates
-)
-from dos2_tools.core.stats_engine import resolve_all_stats
-from dos2_tools.data_models import Item
+import argparse
+
+from dos2_tools.core.game_data import GameData
+
 
 def main():
-    conf = get_config()
-    all_files = resolve_load_order(conf['base_path'], conf['cache_file'])
-    
-    loc_files = get_files_by_pattern(all_files, conf['patterns']['localization_xml'])
-    loc_map = {}
-    for f in loc_files: loc_map.update(parse_xml_localization(f))
-    
-    stats_files = get_files_by_pattern(all_files, conf['patterns']['stats'])
-    raw_stats = {}
-    for f in stats_files: raw_stats.update(parse_stats_txt(f))
-    
-    final_stats = resolve_all_stats(raw_stats)
-    unique_stats = {k: v for k, v in final_stats.items() if v.get("Unique") == "1"}
-    
-    prog_name_files = get_files_by_pattern(all_files, conf['patterns']['item_prog_names'])
-    prog_names = {}
-    for f in prog_name_files: prog_names.update(parse_item_progression_names(f))
-    
-    prog_vis_files = get_files_by_pattern(all_files, conf['patterns']['item_prog_visuals'])
-    prog_visuals = {}
-    for f in prog_vis_files: prog_visuals.update(parse_item_progression_visuals(f))
+    parser = argparse.ArgumentParser(description="Export DOS2 item data to JSON")
+    parser.add_argument(
+        "--out", default="unique_items.json",
+        help="Output JSON file path"
+    )
+    parser.add_argument(
+        "--all", action="store_true",
+        help="Export all items (default: only Unique == 1)"
+    )
+    parser.add_argument(
+        "--refresh-loc", action="store_true",
+        help="Force rebuild of localization cache"
+    )
+    args = parser.parse_args()
 
-    prog_lsj_files = get_files_by_pattern(all_files, conf['patterns']['item_prog_lsj'])
-    prog_keys = []
-    for f in prog_lsj_files:
-        data = parse_lsj(f)
-        if data:
-            keys = data.get("save", {}).get("regions", {}).get("TranslatedStringKeys", {}).get("TranslatedStringKey", [])
-            prog_keys.extend(keys)
-
-    merged_files = get_files_by_pattern(all_files, conf['patterns']['merged_lsj'])
-    merged_files.extend(get_files_by_pattern(all_files, conf['patterns']['root_templates_lsj']))
-    
-    merged_data = {}
-    template_data = {}
-    for f in merged_files:
-        m, t = parse_lsj_templates(f)
-        merged_data.update(m)
-        template_data.update(t)
+    game = GameData(refresh_loc=args.refresh_loc)
+    loc = game.localization
+    stats_db = game.stats
+    templates_by_stats = game.templates_by_stats
+    templates_by_mapkey = game.templates_by_mapkey
 
     items = {}
-    
-    for stats_id, stats in unique_stats.items():
-        item = Item(stats_id=stats_id, stats=stats)
-        item_group = stats.get("ItemGroup")
-        
-        # Gift Bag Pattern
-        if item_group in prog_names:
-            raw_name = prog_names[item_group].get('name')
-            if raw_name:
-                for key in prog_keys:
-                    if key.get("UUID", {}).get("value") == raw_name:
-                        h = key.get("Content", {}).get("handle")
-                        item.display_name = loc_map.get(h)
-                        item.description = prog_names[item_group].get('description')
-                        item.link_method = "GiftBag"
-                        break
 
-        # Base Game Pattern
-        if not item.display_name:
-            for key in prog_keys:
-                if key.get("ExtraData", {}).get("value") == stats_id:
-                    h = key.get("Content", {}).get("handle")
-                    item.display_name = loc_map.get(h)
-                    item.link_method = "BaseGame"
-                    if stats_id in prog_names:
-                        item.description = prog_names[stats_id].get('description')
-                    break
-        
-        if item_group in prog_visuals:
-            item.root_template_uuid = prog_visuals[item_group].get('rootgroup')
-            
-        # Merged Override
-        override = merged_data.get(stats_id)
-        if override:
-            item.link_method = "MergedOverride"
-            dn_node = override.get("DisplayName")
-            if isinstance(dn_node, dict) and "handle" in dn_node:
-                item.display_name = loc_map.get(dn_node["handle"])
-            
-            tmpl_node = override.get("TemplateName")
-            if isinstance(tmpl_node, dict) and "value" in tmpl_node:
-                item.root_template_uuid = tmpl_node["value"]
+    for stats_id, stats_data in stats_db.items():
+        if not args.all and stats_data.get("Unique") != "1":
+            continue
 
-        items[stats_id] = item.__dict__
+        # Resolve display name
+        display_name = game.resolve_display_name(stats_id)
 
-    with open("unique_items.json", "w", encoding='utf-8') as f:
-        json.dump(items, f, indent=4)
-        
-    print(f"Exported {len(items)} items.")
+        # Get root template info
+        rt_uuid = stats_data.get("RootTemplate")
+        icon_uuid = None
+        description = None
+
+        if rt_uuid and rt_uuid in templates_by_mapkey:
+            rt = templates_by_mapkey[rt_uuid]
+            from dos2_tools.core.data_models import LSJNode
+            rt_node = LSJNode(rt)
+
+            icon_node = rt.get("Icon")
+            if isinstance(icon_node, dict):
+                icon_uuid = icon_node.get("value")
+
+            desc_handle = rt_node.get_handle("Description")
+            if desc_handle:
+                description = loc.get_handle_text(desc_handle)
+
+        # Version provenance
+        modified_by = []
+        for rel_path, entry in game.file_index.items():
+            if "Stats/Generated/Data/" in rel_path and entry.was_overridden:
+                for version in entry.modified_by:
+                    if version not in modified_by:
+                        modified_by.append(version)
+
+        items[stats_id] = {
+            "stats_id": stats_id,
+            "display_name": display_name,
+            "root_template_uuid": rt_uuid,
+            "icon_uuid": icon_uuid,
+            "description": description,
+            "stats": {
+                k: v for k, v in stats_data.items()
+                if not k.startswith("_")
+            },
+        }
+
+    with open(args.out, "w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2, ensure_ascii=False)
+
+    print(f"Exported {len(items)} items to {args.out}")
+
 
 if __name__ == "__main__":
     main()
