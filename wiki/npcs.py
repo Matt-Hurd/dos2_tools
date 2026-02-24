@@ -64,6 +64,9 @@ def parse_tags(data):
 
 def parse_trade_treasures(data):
     """Extract trade treasure table IDs from NPC data."""
+    from dos2_tools.core.data_models import GameObject
+    if isinstance(data, GameObject):
+        return data.trade_treasures or []
     tts = data.get("TradeTreasures", [])
     if isinstance(tts, list):
         return tts
@@ -75,7 +78,7 @@ def resolve_item_name(template_uuid, stats_id, game_data):
     if template_uuid:
         rt_data = game_data.templates_by_mapkey.get(template_uuid)
         if rt_data:
-            name = resolve_node_name(rt_data, game_data.localization)
+            name = resolve_node_name(rt_data._to_raw_dict(), game_data.localization)
             if name:
                 return name
 

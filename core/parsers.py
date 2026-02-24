@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 
 from dos2_tools.core.config import GIFTBAG_MAP
-from dos2_tools.core.data_models import LSJNode
+from dos2_tools.core.data_models import LSJNode, GameObject
 
 
 # ─── File-Path Helpers ───────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ def parse_lsj_templates(filepath):
 
     Returns:
         tuple[dict, dict]: (by_stats_id, by_map_key) — two indexes into
-        the same underlying game objects.
+        the same underlying GameObject instances.
     """
     data = parse_lsj(filepath)
     if not data:
@@ -150,22 +150,20 @@ def parse_lsj_templates(filepath):
         if not obj:
             continue
 
-        stats_id = obj.get("Stats")
-        map_key = obj.get("MapKey")
-
-        if stats_id:
-            by_stats[stats_id] = obj
-        if map_key:
-            by_map_key[map_key] = obj
+        if obj.stats_id:
+            by_stats[obj.stats_id] = obj
+        if obj.map_key:
+            by_map_key[obj.map_key] = obj
 
     return by_stats, by_map_key
 
 
 def _extract_game_object(go):
     """
-    Extract relevant fields from a raw GameObjects node.
+    Extract relevant fields from a raw GameObjects node into a GameObject.
 
     Handles both direct-property and attribute-list LSJ formats.
+    Returns None if the node lacks both MapKey and Stats.
     """
     map_key = go.get_value("MapKey")
     stats_id = go.get_value("Stats")
@@ -173,6 +171,7 @@ def _extract_game_object(go):
     icon = go.get_value("Icon")
     description = go.get_raw("Description")
     display_name = go.get_raw("DisplayName")
+    name = go.get_value("Name")
 
     # Attribute-list fallback (older LSJ format)
     for attr in go.get_list("attribute"):
@@ -191,49 +190,55 @@ def _extract_game_object(go):
     if not map_key and not stats_id:
         return None
 
-    obj = {}
-    if map_key:
-        obj["MapKey"] = map_key
-    if stats_id:
-        obj["Stats"] = stats_id
-    if template_name:
-        obj["TemplateName"] = template_name
-    if icon:
-        obj["Icon"] = icon
-    if description:
-        obj["Description"] = description
-    if display_name:
-        obj["DisplayName"] = display_name
+    obj = GameObject(
+        map_key=map_key,
+        stats_id=stats_id,
+        template_name=template_name,
+        icon=icon,
+        name=name,
+        display_name=display_name,
+        description=description,
+    )
 
-    # Trade treasures
+    # Scalar fields
+    raw_type = go.get_raw("Type")
+    if raw_type is not None:
+        obj.type = go.get_value("Type")
+    raw_default_state = go.get_raw("DefaultState")
+    if raw_default_state is not None:
+        obj.default_state = go.get_value("DefaultState")
+
+    # Passthrough raw fields for downstream LSJNode-based helpers
+    for lsj_key, attr_name in (
+        ("SkillList", "skill_list"),
+        ("LevelOverride", "level_override"),
+        ("Transform", "transform"),
+        ("Tags", "tags"),
+        ("ItemList", "item_list"),
+        ("OnUsePeaceActions", "on_use_peace_actions"),
+        ("InventoryList", "inventory_list"),
+    ):
+        val = go.get_raw(lsj_key)
+        if val is not None:
+            setattr(obj, attr_name, val)
+
+    # Trade treasures — unwrap into plain list[str]
     for tt in go.get_list("TradeTreasures"):
         val = tt.get_value("TreasureItem")
         if val:
-            obj.setdefault("TradeTreasures", []).append(val)
+            obj.trade_treasures.append(val)
 
-    # Treasures
+    # Treasures — unwrap into plain list[str]
     for t in go.get_list("Treasures"):
         val = t.get_value("TreasureItem")
         if val:
-            obj.setdefault("Treasures", []).append(val)
-
-    # Passthrough fields — keep raw for downstream LSJNode wrapping
-    for key in (
-        "SkillList", "LevelOverride", "Transform", "Tags",
-        "DefaultState", "Type", "ItemList", "OnUsePeaceActions", "InventoryList",
-        "Name",
-    ):
-        val = go.get_raw(key)
-        if val is not None:
-            if key in ("DefaultState", "Type"):
-                val = go.get_value(key)
-            obj[key] = val
+            obj.treasures.append(val)
 
     # Extract SkillID from OnUsePeaceActions
     if go.has("OnUsePeaceActions"):
         skill_id = go.deep_find_value("SkillID")
         if skill_id:
-            obj["SkillID"] = skill_id
+            obj.skill_id = skill_id
 
     return obj
 

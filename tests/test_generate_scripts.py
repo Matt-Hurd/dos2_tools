@@ -1370,15 +1370,8 @@ class TestGenerateItemsLuaIntegration:
         # Build SkillID index
         mapkey_to_skill = {}
         for rt_uuid, rt_data in templates_by_mapkey.items():
-            skill_id_node = rt_data.get("SkillID")
-            if skill_id_node is not None:
-                skill_id = (
-                    skill_id_node.get("value")
-                    if isinstance(skill_id_node, dict)
-                    else skill_id_node
-                )
-                if skill_id:
-                    mapkey_to_skill[rt_uuid] = skill_id
+            if rt_data.skill_id:
+                mapkey_to_skill[rt_uuid] = rt_data.skill_id
 
         final_lua_data = {}
         for entry_id, data in stats_db.items():

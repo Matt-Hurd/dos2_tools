@@ -1,12 +1,15 @@
 """
 Data models for DOS2 game entities.
 
-Provides two core building blocks used throughout the toolchain:
-  - LSJNode: accessor wrapper for raw LSJ (JSON) game data dicts
-  - FileEntry: file with version provenance tracking
+Provides three core building blocks used throughout the toolchain:
+  - LSJNode:    accessor wrapper for raw LSJ (JSON) game data dicts
+  - GameObject: structured, typed representation of a parsed game object
+  - FileEntry:  file with version provenance tracking
 """
 
+from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import Any
 
 
 class LSJNode:
@@ -161,6 +164,116 @@ def _deep_find(data, target_key):
                 return found
 
     return None
+
+
+# ─── LSJ key → GameObject attribute name ─────────────────────────────────────
+
+_LSJ_KEY_TO_ATTR: dict[str, str] = {
+    "MapKey":             "map_key",
+    "Stats":              "stats_id",
+    "TemplateName":       "template_name",
+    "Icon":               "icon",
+    "Name":               "name",
+    "DisplayName":        "display_name",
+    "Description":        "description",
+    "Type":               "type",
+    "DefaultState":       "default_state",
+    "SkillID":            "skill_id",
+    "LevelOverride":      "level_override",
+    "TradeTreasures":     "trade_treasures",
+    "Treasures":          "treasures",
+    "SkillList":          "skill_list",
+    "Transform":          "transform",
+    "Tags":               "tags",
+    "ItemList":           "item_list",
+    "OnUsePeaceActions":  "on_use_peace_actions",
+    "InventoryList":      "inventory_list",
+}
+
+
+@dataclass
+class GameObject:
+    """
+    Structured representation of a parsed DOS2 game object (item or character).
+
+    Produced by parsers._extract_game_object() — the clean side of the boundary
+    between the raw LSJ world and the rest of the toolchain.
+
+    Display-name / description fields keep their raw {"handle": ...} dicts so
+    callers can resolve localization handles without re-parsing.
+    The passthrough raw fields (tags, skill_list, etc.) stay untyped because
+    they are consumed via LSJNode by specialised helpers downstream.
+    """
+
+    # ─── Identity ────────────────────────────────────────────────────
+    map_key: str | None = None             # UUID of this instance
+    stats_id: str | None = None            # Stats entry ID (e.g. "ARM_Unique_Foo")
+    template_name: str | None = None       # Parent template UUID (TemplateName)
+
+    # ─── Presentation ────────────────────────────────────────────────
+    icon: str | None = None
+    name: str | None = None                # Name field (internal identifier)
+    display_name: dict | None = None       # raw {"handle": "h..."} or {"value": "x"}
+    description: dict | None = None        # same
+
+    # ─── Classification ──────────────────────────────────────────────
+    type: str | None = None                # "item", "character", etc.
+    default_state: Any = None
+    skill_id: str | None = None            # extracted from OnUsePeaceActions
+
+    # ─── Level / gameplay ────────────────────────────────────────────
+    level_override: dict | None = None     # raw {"value": N} dict
+    trade_treasures: list[str] = field(default_factory=list)
+    treasures: list[str] = field(default_factory=list)
+
+    # ─── Raw passthrough (consumed by LSJNode-based helpers) ─────────
+    skill_list: Any = None
+    transform: Any = None
+    tags: Any = None
+    item_list: Any = None
+    on_use_peace_actions: Any = None
+    inventory_list: Any = None
+
+    # ─── Helpers ─────────────────────────────────────────────────────
+
+    def get_handle(self, lsj_key: str) -> str | None:
+        """
+        Extract a localization handle from a raw display-name/description field.
+
+        Args:
+            lsj_key: The original LSJ field name (e.g. "DisplayName").
+
+        Returns:
+            The handle string (e.g. "h_abc123"), or None.
+        """
+        attr = _LSJ_KEY_TO_ATTR.get(lsj_key, lsj_key.lower())
+        val = getattr(self, attr, None)
+        if isinstance(val, dict):
+            return val.get("handle")
+        return None
+
+    def as_lsj_node(self) -> "LSJNode":
+        """
+        Return this object as an LSJNode view.
+
+        Escape hatch for callers that still need LSJNode-style access on all
+        fields (e.g. deep nested helpers). Reconstructs the raw dict.
+        """
+        return LSJNode(self._to_raw_dict())
+
+    def _to_raw_dict(self) -> dict:
+        """Reconstruct a dict compatible with _extract_game_object output."""
+        raw: dict[str, Any] = {}
+        for lsj_key, attr in _LSJ_KEY_TO_ATTR.items():
+            val = getattr(self, attr)
+            if val is not None:
+                raw[lsj_key] = val
+        # TradeTreasures / Treasures: stored as lists, not LSJNode-wrapped
+        if self.trade_treasures:
+            raw["TradeTreasures"] = self.trade_treasures
+        if self.treasures:
+            raw["Treasures"] = self.treasures
+        return raw
 
 
 @dataclass

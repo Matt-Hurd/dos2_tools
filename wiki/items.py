@@ -164,13 +164,13 @@ def scan_levels_for_items(game_data):
         _, level_objects = parse_lsj_templates(f_path)
 
         for map_key, obj_data in level_objects.items():
-            obj = LSJNode(obj_data)
+            obj = obj_data.as_lsj_node()  # GameObject → LSJNode for field access
             coords = format_coordinate(obj.get_raw("Transform"))
             if not coords:
                 continue
 
             full_loc_str = f"{coords} ({region})"
-            template_uuid = obj.get_value("TemplateName", "")
+            template_uuid = obj_data.template_name
 
             if template_uuid:
                 instance_name = resolve_node_name(obj_data, loc)
@@ -182,7 +182,7 @@ def scan_levels_for_items(game_data):
                     safe_var_name = sanitize_filename(instance_name)
 
                     if safe_var_name not in unique_variants:
-                        stats_val = obj.get_value("Stats")
+                        stats_val = obj_data.stats_id
                         if not stats_val:
                             stats_val = default_rt_data.get("stats_id")
 
@@ -234,12 +234,12 @@ def scan_levels_for_items(game_data):
         _, level_objects = parse_lsj_templates(f_path)
 
         for map_key, obj_data in level_objects.items():
-            obj = LSJNode(obj_data)
+            obj = obj_data.as_lsj_node()  # GameObject → LSJNode for field access
             coords = format_coordinate(obj.get_raw("Transform"))
             if not coords:
                 continue
 
-            npc_name = resolve_node_name(obj_data, loc)
+            npc_name = resolve_node_name(obj_data._to_raw_dict(), loc)
             if npc_name:
                 npc_name = f"[[{npc_name}]]|on_npc=Yes"
             else:
@@ -277,17 +277,17 @@ def _build_root_template_db(game_data):
     db = {}
 
     for rt_uuid, rt_data in rt_raw.items():
-        rt = LSJNode(rt_data)
-        if rt.get_value("Type") != "item":
+        rt = rt_data.as_lsj_node()  # GameObject → LSJNode for field access
+        if rt_data.type != "item":
             continue
 
-        name = resolve_node_name(rt_data, loc)
+        name = resolve_node_name(rt_data._to_raw_dict(), loc)
 
-        desc_handle = rt.get_handle("Description")
+        desc_handle = rt_data.get_handle("Description")
         desc = loc.get_handle_text(desc_handle) if desc_handle else None
 
-        stats_id = rt.get_value("Stats")
-        book_id, recipes = extract_action_data(rt_data)
+        stats_id = rt_data.stats_id
+        book_id, recipes = extract_action_data(rt_data._to_raw_dict())
 
         db[rt_uuid] = {
             "name": name,

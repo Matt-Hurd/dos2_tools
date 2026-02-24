@@ -33,7 +33,7 @@ from dos2_tools.core.parsers import (
 from dos2_tools.core.stats_engine import resolve_all_stats
 from dos2_tools.core.localization import load_localization
 from dos2_tools.core.loot import StatsManager, TreasureParser
-from dos2_tools.core.data_models import FileEntry, LSJNode
+from dos2_tools.core.data_models import FileEntry, LSJNode, GameObject
 
 
 class GameData:
@@ -317,8 +317,11 @@ class GameData:
 
         # Pattern 1: Template DisplayName
         if template_data:
-            td = LSJNode(template_data)
-            handle = td.get_handle("DisplayName")
+            if isinstance(template_data, GameObject):
+                handle = template_data.get_handle("DisplayName")
+            else:
+                td = LSJNode(template_data)
+                handle = td.get_handle("DisplayName")
             if handle:
                 text = loc.get_handle_text(handle)
                 if text:
@@ -349,13 +352,16 @@ class GameData:
             if visual_group:
                 root_uuid = visual_group.get("rootgroup")
                 if root_uuid:
-                    rt = self.templates_by_mapkey.get(root_uuid, {})
-                    td2 = LSJNode(rt)
-                    handle2 = td2.get_handle("DisplayName")
-                    if handle2:
-                        text = loc.get_handle_text(handle2)
-                        if text:
-                            return text
+                    rt = self.templates_by_mapkey.get(root_uuid)
+                    if rt is not None:
+                        if isinstance(rt, GameObject):
+                            handle2 = rt.get_handle("DisplayName")
+                        else:
+                            handle2 = LSJNode(rt).get_handle("DisplayName")
+                        if handle2:
+                            text = loc.get_handle_text(handle2)
+                            if text:
+                                return text
 
             # Pattern 3: LSJ ExtraData
             for key_raw in self.item_prog_keys:

@@ -23,7 +23,6 @@ from dos2_tools.core.parsers import parse_lsj_templates, get_region_name
 from dos2_tools.core.data_models import LSJNode
 
 
-
 # NPC stat fields rendered in the wiki infobox
 STAT_FIELDS = [
     "Strength", "Finesse", "Intelligence", "Constitution", "Memory", "Wits",
@@ -263,14 +262,14 @@ def main():
         _, level_objects = parse_lsj_templates(f_path)
         region_name = get_region_name(f_path)
 
-        for obj_uuid, level_data in level_objects.items():
-            template_uuid = level_data.get("TemplateName")
+        for obj_uuid, go in level_objects.items():
+            template_uuid = go.template_name
             final_data = {}
             if template_uuid and template_uuid in templates_by_mapkey:
-                final_data = deepcopy(templates_by_mapkey[template_uuid])
-            final_data.update(level_data)
+                final_data = deepcopy(templates_by_mapkey[template_uuid]._to_raw_dict())
+            final_data.update(go._to_raw_dict())
 
-            # Resolve display name
+            # Resolve display name from the merged raw dict
             dn_node = final_data.get("DisplayName")
             final_name = None
             if isinstance(dn_node, dict):

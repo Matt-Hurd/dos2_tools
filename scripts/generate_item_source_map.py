@@ -18,7 +18,6 @@ from collections import defaultdict
 from copy import deepcopy
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.data_models import LSJNode
 from dos2_tools.core.parsers import parse_lsj_templates
 
 MAX_SIMULATION_LEVEL = 20
@@ -41,34 +40,54 @@ def collect_npc_tables(game_data):
 
         _, level_objects = parse_lsj_templates(f_path)
 
-        for obj_uuid, level_data in level_objects.items():
+        for obj_uuid, go in level_objects.items():
             # Merge root template data with level override
-            node = LSJNode(level_data)
-            template_uuid = node.get_value("TemplateName")
-            merged = {}
+            template_uuid = go.template_name
             if template_uuid and template_uuid in templates_by_mapkey:
-                merged = deepcopy(templates_by_mapkey[template_uuid])
-            merged.update(level_data)
-            merged_node = LSJNode(merged)
+                base = templates_by_mapkey[template_uuid]
+                merged = deepcopy(base._to_raw_dict())
+            else:
+                merged = {}
+            merged.update(go._to_raw_dict())
 
-            # Get display name
-            handle = merged_node.get_handle("DisplayName")
+            # Get display name — prefer level-object handle, fall back to merged raw
+            handle = go.get_handle("DisplayName")
+            if not handle and template_uuid and template_uuid in templates_by_mapkey:
+                handle = templates_by_mapkey[template_uuid].get_handle("DisplayName")
             npc_name = loc.get_handle_text(handle) if handle else None
             if not npc_name:
-                npc_name = merged_node.get_value("DisplayName")
+                dn = merged.get("DisplayName")
+                if isinstance(dn, dict):
+                    npc_name = dn.get("value")
+                elif isinstance(dn, str):
+                    npc_name = dn
             if not npc_name:
                 continue
 
             # Get Treasures (drops) and TradeTreasures (vendor stock).
-            # _extract_game_object already unwraps these into plain list[str],
-            # so we iterate directly rather than going through LSJNode.get_list().
+            # _extract_game_object already unwraps these into plain list[str] on
+            # the GameObject, so we read the merged list directly.
             drops = set()
             trades = set()
 
-            for field, dest in (("Treasures", drops), ("TradeTreasures", trades)):
-                for val in merged.get(field, []):
+            for val in (go.trade_treasures or []):
+                if isinstance(val, str) and val not in ("Empty", ""):
+                    trades.add(val)
+            # Also check template treasures if level object doesn't override
+            if template_uuid and template_uuid in templates_by_mapkey:
+                base = templates_by_mapkey[template_uuid]
+                for val in (base.trade_treasures or []):
                     if isinstance(val, str) and val not in ("Empty", ""):
-                        dest.add(val)
+                        trades.add(val)
+
+            for val in (go.treasures or []):
+                if isinstance(val, str) and val not in ("Empty", ""):
+                    drops.add(val)
+            if template_uuid and template_uuid in templates_by_mapkey:
+                base = templates_by_mapkey[template_uuid]
+                for val in (base.treasures or []):
+                    if isinstance(val, str) and val not in ("Empty", ""):
+                        drops.add(val)
 
             if not drops and not trades:
                 continue
