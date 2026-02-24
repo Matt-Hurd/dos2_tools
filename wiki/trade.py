@@ -174,11 +174,13 @@ class TradeTableRenderer:
 
         # Remaining random drops
         pool_rows = []
-        # Sort by chance descending
+        # Sort by chance descending; keep pool node alongside its rendered row
         for child in sorted(node_copy.children, key=lambda x: x.chance, reverse=True):
             row = self.render_row(child)
             if row:
-                pool_rows.append(row)
+                qty = self.get_qty_display(child)
+                chance = "Always Available" if child.chance >= 0.99 else f"{child.chance:.1%}"
+                pool_rows.append((row, qty, chance))
 
         if not guaranteed_rows and not pool_rows and not display_gold_qty:
             return None
@@ -199,8 +201,10 @@ class TradeTableRenderer:
 
         if pool_rows:
             output.append(f"==={header_text} (Random)===")
-            for row in pool_rows:
-                output.append("{{TradePoolHead}}")
+            for row, qty, chance in pool_rows:
+                output.append(
+                    f"{{{{TradePoolHead|name=Selection Pool (Selects {qty})|chance={chance}}}}}"
+                )
                 output.append(row)
                 output.append("{{TradeTableBottom}}")
 

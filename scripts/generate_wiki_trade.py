@@ -13,7 +13,8 @@ import os
 import argparse
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.data_models import LSJNode
+from dos2_tools.core.data_models import LSJNode, GameObject
+from dos2_tools.core.parsers import parse_lsj_templates
 from dos2_tools.wiki.trade import TradeTableRenderer
 
 
@@ -32,28 +33,33 @@ def find_npc_trade_ids(npc_name, game_data):
         if "Test" in f_path or "Develop" in f_path:
             continue
 
-        from dos2_tools.core.parsers import parse_lsj_templates
         _, objects = parse_lsj_templates(f_path)
 
         for _, obj_data in objects.items():
-            node = LSJNode(obj_data)
+            # parse_lsj_templates returns GameObject instances; convert to raw dict
+            if isinstance(obj_data, GameObject):
+                raw = obj_data._to_raw_dict()
+                trade_list = list(obj_data.trade_treasures)  # already list[str]
+            else:
+                raw = obj_data
+                trade_list = []
+                raw_tt = raw.get("TradeTreasures", []) if isinstance(raw, dict) else []
+                for entry in (raw_tt if isinstance(raw_tt, list) else [raw_tt]):
+                    if isinstance(entry, dict):
+                        val = entry.get("value") or entry.get("Object")
+                        if val:
+                            trade_list.append(val)
+                    elif isinstance(entry, str):
+                        trade_list.append(entry)
+
+            node = LSJNode(raw)
             handle = node.get_handle("DisplayName")
             display_name = loc.get_handle_text(handle) if handle else None
             if not display_name:
                 display_name = node.get_value("DisplayName") or ""
 
-            if npc_name.lower() in display_name.lower():
-                trade_list = obj_data.get("TradeTreasures", [])
-                if isinstance(trade_list, list):
-                    for entry in trade_list:
-                        if isinstance(entry, dict):
-                            val = entry.get("value") or entry.get("Object")
-                            if val:
-                                found.append(val)
-                        elif isinstance(entry, str):
-                            found.append(entry)
-                elif isinstance(trade_list, str):
-                    found.append(trade_list)
+            if npc_name.lower() in (display_name or "").lower():
+                found.extend(trade_list)
 
     unique_ids = sorted(set(x for x in found if x))
     print(f"  Found trade IDs: {unique_ids}")

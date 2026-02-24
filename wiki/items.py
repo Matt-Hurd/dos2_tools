@@ -26,7 +26,6 @@ from collections import defaultdict, OrderedDict
 from dos2_tools.core.config import VALID_LEVELS, LOAD_ORDER_METADATA
 from dos2_tools.core.data_models import LSJNode
 from dos2_tools.core.parsers import parse_lsj_templates
-from dos2_tools.core.formatters import sanitize_filename
 from dos2_tools.core.file_system import get_files_by_pattern
 
 
@@ -185,7 +184,7 @@ def scan_levels_for_items(game_data):
 
                 if (instance_name and
                         instance_name != default_rt_data.get("name")):
-                    safe_var_name = sanitize_filename(instance_name)
+                    safe_var_name = instance_name.strip()
 
                     if safe_var_name not in unique_variants:
                         stats_val = obj_data.stats_id
@@ -694,8 +693,7 @@ def generate_full_page(page_data, game_data, sections=None):
 
 def _determine_infobox_template(name, stats_id, game_data):
     """Determine which infobox template to use based on item type."""
-    safe_name = sanitize_filename(name)
-    if "Skillbook" in safe_name:
+    if "Skillbook" in name:
         return "InfoboxSkillbook"
 
     stats = game_data.stats.get(stats_id, {})

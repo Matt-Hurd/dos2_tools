@@ -4,30 +4,10 @@ Output formatters for DOS2 data.
 Handles conversion to:
   - Lua table syntax (for MediaWiki Scribunto modules)
   - Wikitext markup (infoboxes, template calls)
-  - Filename sanitization for wiki uploads
   - Type conversion (string -> int/float/bool)
 """
 
 import re
-
-
-# ─── Filename Sanitization ──────────────────────────────────────────────────
-
-def sanitize_filename(name):
-    """
-    Sanitize a string for use as a wiki page filename.
-
-    Strips "Template:" prefix and URL-encodes characters that are
-    invalid in MediaWiki page titles.
-    """
-    if name.startswith("Template:"):
-        name = name[9:]
-
-    def hex_repl(match):
-        return f"%{ord(match.group(0)):02X}"
-
-    clean = re.sub(r'[\\/*?:"<>|]', hex_repl, name)
-    return clean.strip()
 
 
 # ─── Type Conversion ────────────────────────────────────────────────────────

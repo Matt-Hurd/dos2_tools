@@ -18,7 +18,6 @@ from collections import defaultdict
 from copy import deepcopy
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.formatters import sanitize_filename
 from dos2_tools.core.parsers import parse_lsj_templates, get_region_name
 from dos2_tools.core.data_models import LSJNode
 
@@ -293,7 +292,7 @@ def main():
     print(f"Grouped into {len(grouped_npcs)} unique NPC names.")
 
     for name, instances in grouped_npcs.items():
-        safe_name = sanitize_filename(name)
+        safe_name = name.strip()
         if not safe_name:
             continue
 

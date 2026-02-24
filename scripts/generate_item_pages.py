@@ -15,7 +15,6 @@ import argparse
 from collections import defaultdict
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.formatters import sanitize_filename
 from dos2_tools.wiki.items import (
     scan_levels_for_items,
     generate_full_page,
@@ -99,7 +98,7 @@ def build_page_index(game_data):
         if not name or len(name) > 50:
             continue
 
-        safe_name = sanitize_filename(name)
+        safe_name = name.strip()
         page = pages[safe_name]
         page["name"] = name
         page["stats_id"] = stats_id
@@ -135,7 +134,7 @@ def build_page_index(game_data):
         if not name:
             continue
 
-        safe_name = sanitize_filename(name)
+        safe_name = name.strip()
         page = pages[safe_name]
         page["name"] = name
         page["root_template_uuid"] = rt_uuid

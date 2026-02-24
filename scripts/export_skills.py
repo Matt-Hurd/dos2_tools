@@ -13,7 +13,6 @@ import os
 import argparse
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.formatters import sanitize_filename
 
 
 def main():
@@ -56,7 +55,7 @@ def main():
         if not name:
             continue
 
-        safe_name = sanitize_filename(name)
+        safe_name = name.strip()
         if not safe_name or safe_name in seen_names:
             continue
         seen_names.add(safe_name)
