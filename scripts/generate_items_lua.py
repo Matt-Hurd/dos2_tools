@@ -15,6 +15,7 @@ Usage:
 import argparse
 
 from dos2_tools.core.game_data import GameData
+from dos2_tools.core.data_models import LSJNode
 from dos2_tools.core.formatters import to_lua_table
 
 
@@ -142,11 +143,9 @@ def main():
     print("  Building RootTemplate SkillID index...")
     mapkey_to_skill = {}
     for rt_uuid, rt_data in templates_by_mapkey.items():
-        skill_id_node = rt_data.get("SkillID")
-        if skill_id_node is not None:
-            skill_id = skill_id_node.get("value") if isinstance(skill_id_node, dict) else skill_id_node
-            if skill_id:
-                mapkey_to_skill[rt_uuid] = skill_id
+        skill_id = LSJNode(rt_data).get_value("SkillID")
+        if skill_id:
+            mapkey_to_skill[rt_uuid] = skill_id
 
     # Filter and build output
     final_lua_data = {}

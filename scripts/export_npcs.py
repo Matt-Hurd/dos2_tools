@@ -20,6 +20,7 @@ from copy import deepcopy
 from dos2_tools.core.game_data import GameData
 from dos2_tools.core.formatters import sanitize_filename
 from dos2_tools.core.parsers import parse_lsj_templates, get_region_name
+from dos2_tools.core.data_models import LSJNode
 
 
 
@@ -41,15 +42,21 @@ def parse_conditions(condition_list):
     if not condition_list:
         return ""
     conditions = []
-    for cond in condition_list:
-        if not isinstance(cond, dict):
-            continue
-        if cond.get("HasNoPhysicalArmor", {}).get("value") is True:
+    for cond_raw in condition_list:
+        cond = LSJNode(cond_raw) if not isinstance(cond_raw, LSJNode) else cond_raw
+        if cond.get_value("HasNoPhysicalArmor") is True:
             conditions.append("No Physical Armor")
-        if cond.get("HasNoMagicalArmor", {}).get("value") is True:
+        if cond.get_value("HasNoMagicalArmor") is True:
             conditions.append("No Magic Armor")
-        min_hp = cond.get("MinimumHealthPercentage", {}).get("value", 0)
-        max_hp = cond.get("MaximumHealthPercentage", {}).get("value", 100)
+        min_hp = cond.get_value("MinimumHealthPercentage") or 0
+        max_hp = cond.get_value("MaximumHealthPercentage") or 100
+        # get_value unwraps {"value": N} dicts, but booleans come back as bools;
+        # integers from the game data arrive as strings in some LSJ formats.
+        try:
+            min_hp = int(min_hp)
+            max_hp = int(max_hp)
+        except (TypeError, ValueError):
+            min_hp, max_hp = 0, 100
         if min_hp > 0 and max_hp < 100:
             conditions.append(f"HP {min_hp}-{max_hp}%")
         elif min_hp > 0:
@@ -64,27 +71,25 @@ def parse_skills(skill_list_node):
     parsed = []
     if not skill_list_node:
         return parsed
-    for entry in skill_list_node:
-        inner = entry.get("Skill", [])
-        if not isinstance(inner, list):
-            inner = [inner]
-        for skill in inner:
-            skill_id = skill.get("Skill", {}).get("value")
+    for entry_raw in skill_list_node:
+        entry = LSJNode(entry_raw) if not isinstance(entry_raw, LSJNode) else entry_raw
+        for skill in entry.get_list("Skill"):
+            skill_id = skill.get_value("Skill")
             if not skill_id:
                 continue
             modes = []
-            if skill.get("CasualExplorer", {}).get("value") is True:
+            if skill.get_value("CasualExplorer") is True:
                 modes.append("Explorer")
-            if skill.get("Classic", {}).get("value") is True:
+            if skill.get_value("Classic") is True:
                 modes.append("Classic")
-            if skill.get("TacticianHardcore", {}).get("value") is True:
+            if skill.get_value("TacticianHardcore") is True:
                 modes.append("Tactician")
-            if skill.get("HonorHardcore", {}).get("value") is True:
+            if skill.get_value("HonorHardcore") is True:
                 modes.append("Honor")
             if len(modes) == 4:
                 modes = []
-            source_cond = parse_conditions(skill.get("SourceConditions", []))
-            target_cond = parse_conditions(skill.get("TargetConditions", []))
+            source_cond = parse_conditions(skill.get_raw("SourceConditions") or [])
+            target_cond = parse_conditions(skill.get_raw("TargetConditions") or [])
             cond_str = ""
             if source_cond:
                 cond_str += f"Self: {source_cond}"
@@ -95,10 +100,10 @@ def parse_skills(skill_list_node):
             parsed.append({
                 "id": skill_id,
                 "modes": ";".join(modes),
-                "score": skill.get("ScoreModifier", {}).get("value", 1.0),
-                "start_round": skill.get("StartRound", {}).get("value", 0),
+                "score": skill.get_value("ScoreModifier") or 1.0,
+                "start_round": skill.get_value("StartRound") or 0,
                 "conditions": cond_str,
-                "aiflags": skill.get("AIFlags", {}).get("value", 0),
+                "aiflags": skill.get_value("AIFlags") or 0,
             })
     return parsed
 
@@ -106,26 +111,25 @@ def parse_skills(skill_list_node):
 def parse_tags(data):
     """Extract semicolon-separated sorted tag IDs."""
     tags = []
-    tag_root = data.get("Tags", [])
-    if not isinstance(tag_root, list):
-        return ""
-    for entry in tag_root:
-        inner = entry.get("Tag", [])
-        if not isinstance(inner, list):
-            inner = [inner]
-        for t in inner:
-            val = t.get("Object", {}).get("value")
+    node = LSJNode(data) if not isinstance(data, LSJNode) else data
+    for entry in node.get_list("Tags"):
+        for tag in entry.get_list("Tag"):
+            val = tag.get_value("Object")
             if val:
                 tags.append(val)
     return ";".join(sorted(set(tags)))
 
 
 def parse_trade_treasures(data):
-    """Return semicolon-joined TradeTreasures list."""
-    tt_root = data.get("TradeTreasures", [])
-    if not isinstance(tt_root, list):
+    """Return semicolon-joined TradeTreasures list.
+
+    TradeTreasures is stored as a plain list[str] after _extract_game_object
+    processing, so we read it directly from the dict.
+    """
+    tt = data.get("TradeTreasures", [])
+    if not isinstance(tt, list):
         return ""
-    return ";".join(tt_root)
+    return ";".join(tt)
 
 
 def parse_inventory_items(item_list_root, templates_by_mapkey, loc):
@@ -133,25 +137,21 @@ def parse_inventory_items(item_list_root, templates_by_mapkey, loc):
     items_found = []
     if not item_list_root:
         return items_found
-    for item_entry in item_list_root:
-        items = item_entry.get("Item", [])
-        if not isinstance(items, list):
-            items = [items]
-        for item in items:
-            t_uuid = item.get("TemplateID", {}).get("value")
-            stats_id = item.get("ItemName", {}).get("value")
-            amount = item.get("Amount", {}).get("value", 1)
+    for item_entry_raw in item_list_root:
+        item_entry = LSJNode(item_entry_raw) if not isinstance(item_entry_raw, LSJNode) else item_entry_raw
+        for item in item_entry.get_list("Item"):
+            t_uuid = item.get_value("TemplateID")
+            stats_id = item.get_value("ItemName")
+            amount = item.get_value("Amount") or 1
             # Try template display name first
             name = None
             if t_uuid and t_uuid in templates_by_mapkey:
-                rt = templates_by_mapkey[t_uuid]
-                dn = rt.get("DisplayName")
-                if isinstance(dn, dict):
-                    handle = dn.get("handle")
-                    if handle:
-                        name = loc.get_handle_text(handle)
-                    if not name:
-                        name = dn.get("value")
+                rt = LSJNode(templates_by_mapkey[t_uuid])
+                handle = rt.get_handle("DisplayName")
+                if handle:
+                    name = loc.get_handle_text(handle)
+                if not name:
+                    name = rt.get_value("DisplayName")
             if not name and stats_id:
                 name = loc.get_text(stats_id) or stats_id
             if name:

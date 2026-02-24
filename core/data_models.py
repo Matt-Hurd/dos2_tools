@@ -1,12 +1,12 @@
 """
 Data models for DOS2 game entities.
 
-Dataclasses representing the core game data structures used throughout
-the toolchain: file entries with version provenance, items, NPCs, etc.
+Provides two core building blocks used throughout the toolchain:
+  - LSJNode: accessor wrapper for raw LSJ (JSON) game data dicts
+  - FileEntry: file with version provenance tracking
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Any
 
 
 class LSJNode:
@@ -185,57 +185,3 @@ class FileEntry:
     def was_overridden(self) -> bool:
         """Whether this file was modified after its initial introduction."""
         return len(self.modified_by) > 1
-
-
-@dataclass
-class Item:
-    """A game item with resolved stats and display data."""
-    stats_id: str
-    display_name: Optional[str] = None
-    description: Optional[str] = None
-    root_template_uuid: Optional[str] = None
-    icon: Optional[str] = None
-    stats: dict[str, Any] = field(default_factory=dict)
-    link_method: Optional[str] = None
-    giftbag: Optional[str] = None
-    version_info: Optional[FileEntry] = None
-
-    @property
-    def is_unique(self) -> bool:
-        return self.stats.get("Unique") == "1"
-
-
-@dataclass
-class NPC:
-    """A game NPC/character with resolved data."""
-    map_key: str
-    display_name: Optional[str] = None
-    stats_id: Optional[str] = None
-    region: Optional[str] = None
-    level_override: Optional[int] = None
-    skills: list[dict] = field(default_factory=list)
-    trade_treasures: list[str] = field(default_factory=list)
-    treasures: list[str] = field(default_factory=list)
-    tags: list[str] = field(default_factory=list)
-    inventory_items: list[dict] = field(default_factory=list)
-    conditions: list[dict] = field(default_factory=list)
-    template_name: Optional[str] = None
-    version_info: Optional[FileEntry] = None
-
-
-@dataclass
-class Location:
-    """A world location where an item or NPC can be found."""
-    region: str
-    coordinates: Optional[tuple[float, float, float]] = None
-    container_name: Optional[str] = None
-    container_uuid: Optional[str] = None
-
-
-@dataclass
-class CraftingRecipe:
-    """A crafting recipe involving one or more ingredients."""
-    recipe_id: str
-    ingredients: list[dict] = field(default_factory=list)
-    results: list[dict] = field(default_factory=list)
-    giftbag: Optional[str] = None

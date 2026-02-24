@@ -59,21 +59,15 @@ def collect_npc_tables(game_data):
             if not npc_name:
                 continue
 
-            # Get Treasures (drops) and TradeTreasures (vendor stock)
+            # Get Treasures (drops) and TradeTreasures (vendor stock).
+            # _extract_game_object already unwraps these into plain list[str],
+            # so we iterate directly rather than going through LSJNode.get_list().
             drops = set()
             trades = set()
 
             for field, dest in (("Treasures", drops), ("TradeTreasures", trades)):
-                raw = merged.get(field, [])
-                if not isinstance(raw, list):
-                    raw = [raw] if raw else []
-                for entry in raw:
-                    val = None
-                    if isinstance(entry, dict):
-                        val = entry.get("value") or entry.get("Object")
-                    elif isinstance(entry, str):
-                        val = entry
-                    if val and val not in ("Empty", ""):
+                for val in merged.get(field, []):
+                    if isinstance(val, str) and val not in ("Empty", ""):
                         dest.add(val)
 
             if not drops and not trades:
