@@ -41,26 +41,22 @@ def build_page_index(game_data):
     root_template_db = {}
 
     for rt_uuid, rt_data in rt_raw.items():
-        item_type = rt_data.get("Type")
-        if isinstance(item_type, dict):
-            item_type = item_type.get("value")
+        # templates_by_mapkey now returns GameObject instances
+        item_type = rt_data.type
         if item_type != "item":
             continue
 
-        name = resolve_node_name(rt_data, loc)
+        raw_dict = rt_data._to_raw_dict()
+        name = resolve_node_name(raw_dict, loc)
+
         desc = None
-        desc_node = rt_data.get("Description")
-        if isinstance(desc_node, dict) and "handle" in desc_node:
-            desc = loc.get_handle_text(desc_node["handle"])
+        if rt_data.description and isinstance(rt_data.description, dict):
+            handle = rt_data.description.get("handle")
+            if handle:
+                desc = loc.get_handle_text(handle)
 
-        stats_node = rt_data.get("Stats")
-        stats_id = (
-            stats_node.get("value")
-            if isinstance(stats_node, dict)
-            else stats_node
-        )
-
-        book_id, recipes = extract_action_data(rt_data)
+        stats_id = rt_data.stats_id
+        book_id, recipes = extract_action_data(raw_dict)
 
         root_template_db[rt_uuid] = {
             "name": name,
@@ -68,7 +64,7 @@ def build_page_index(game_data):
             "description": desc,
             "book_id": book_id,
             "recipes": recipes,
-            "raw_data": rt_data,
+            "raw_data": raw_dict,
         }
 
     # Scan levels
@@ -221,6 +217,10 @@ def main():
     count = 0
     for safe_name, page_data in pages.items():
         if args.filter and args.filter.lower() not in safe_name.lower():
+            continue
+
+        # Skip items with no root template UUID — nothing to anchor the page to
+        if not page_data.get("root_template_uuid"):
             continue
 
         content = generate_full_page(page_data, game, sections=args.sections)

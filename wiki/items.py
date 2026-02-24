@@ -66,7 +66,17 @@ def format_coordinate(transform_node):
 
 
 def resolve_node_name(node_data, localization):
-    """Resolve the display name of a game object node."""
+    """Resolve the display name of a game object node via localization.
+
+    Only returns text that came from english.xml:
+      1. DisplayName.handle → handle_map lookup
+      2. Stats value → UUID-based localization lookup
+
+    The raw Name field is intentionally excluded — it is an internal
+    object identifier set by developers, never a player-visible string.
+    The discriminator between a real name and an internal ID is whether
+    the handle resolves in english.xml.
+    """
     node = LSJNode(node_data) if not isinstance(node_data, LSJNode) else node_data
 
     handle = node.get_handle("DisplayName")
@@ -78,10 +88,6 @@ def resolve_node_name(node_data, localization):
     stats_id = node.get_value("Stats")
     if stats_id and stats_id != "None":
         return localization.get_text(stats_id)
-
-    name = node.get_value("Name")
-    if name:
-        return name
 
     return None
 
@@ -173,7 +179,7 @@ def scan_levels_for_items(game_data):
             template_uuid = obj_data.template_name
 
             if template_uuid:
-                instance_name = resolve_node_name(obj_data, loc)
+                instance_name = resolve_node_name(obj_data._to_raw_dict(), loc)
 
                 default_rt_data = root_template_db.get(template_uuid, {})
 
@@ -215,7 +221,7 @@ def scan_levels_for_items(game_data):
             # Items inside containers
             if obj.has("ItemList"):
                 container_name = (
-                    resolve_node_name(obj_data, loc) or "Container"
+                    resolve_node_name(obj_data._to_raw_dict(), loc) or "Container"
                 )
                 _scan_item_list(
                     obj.get_list("ItemList"), full_loc_str, container_name,
@@ -271,27 +277,43 @@ def _scan_item_list(item_list_nodes, loc_str, container_name,
 
 
 def _build_root_template_db(game_data):
-    """Build a lookup of root template UUID -> item info."""
+    """Build a lookup of root template UUID -> item info.
+
+    Only includes templates that have a DisplayName handle which resolves
+    in english.xml. This is the correct discriminator — the Name field
+    on root template objects is an internal object identifier, not a
+    player-visible display name.
+    """
     loc = game_data.localization
     rt_raw = game_data.templates_by_mapkey
     db = {}
 
     for rt_uuid, rt_data in rt_raw.items():
-        rt = rt_data.as_lsj_node()  # GameObject → LSJNode for field access
         if rt_data.type != "item":
             continue
 
-        name = resolve_node_name(rt_data._to_raw_dict(), loc)
+        # Use the GameObject API directly: display_name holds the DisplayName
+        # dict with handle → english.xml lookup. Stats fallback also allowed.
+        name = None
+        if rt_data.display_name and isinstance(rt_data.display_name, dict):
+            handle = rt_data.display_name.get("handle")
+            if handle:
+                name = loc.get_handle_text(handle)
+        if not name and rt_data.stats_id:
+            name = loc.get_text(rt_data.stats_id)
+
+        # No localized name means this template has no player-visible identity
+        if not name:
+            continue
 
         desc_handle = rt_data.get_handle("Description")
         desc = loc.get_handle_text(desc_handle) if desc_handle else None
 
-        stats_id = rt_data.stats_id
         book_id, recipes = extract_action_data(rt_data._to_raw_dict())
 
         db[rt_uuid] = {
             "name": name,
-            "stats_id": stats_id,
+            "stats_id": rt_data.stats_id,
             "description": desc,
             "book_id": book_id,
             "recipes": recipes,
