@@ -22,6 +22,17 @@ def escape_lua_string(s):
     return f'"{clean}"'
 
 
+# Hardcoded display-name overrides for stats IDs where the data-driven lookup
+# produces an incorrect or ambiguous result.
+#
+# BOOK_Paper_Sheet_A: matches many templates; the common name is "Sheet of Paper".
+# WPN_UNIQUE_AtaraxianScythe: localization handle resolves to a wrong string.
+NAME_OVERRIDES = {
+    "BOOK_Paper_Sheet_A": "Sheet of Paper",
+    "WPN_UNIQUE_AtaraxianScythe": "The Swornbreaker",
+}
+
+
 def build_recipe_lua(item_combos, game):
     """
     Build Lua lines matching the old RecipeData.lua format exactly.
@@ -56,17 +67,26 @@ def build_recipe_lua(item_combos, game):
             transform = data.get(f"Transform {i}", "")
 
             # Resolve display name by ingredient type
-            display_name = obj_id
-            if obj_type == "Object":
-                template_data = game.templates_by_stats.get(obj_id)
-                loc_name = game.resolve_display_name(obj_id, template_data=template_data)
-                if loc_name:
-                    display_name = loc_name
-            elif obj_type == "Category":
-                preview = game.combo_previews.get(obj_id, {})
-                tooltip = preview.get("Tooltip")
-                if tooltip:
-                    display_name = tooltip
+            display_name = NAME_OVERRIDES.get(obj_id)
+            if display_name is None:
+                display_name = obj_id
+                if obj_type == "Object":
+                    # NOTE: A stats ID used as a recipe ingredient (Type = "Object") is not
+                    # a unique in-world item — many distinct RootTemplates can share the same
+                    # Stats value.  For example, "BOOK_Paper_Sheet_A" is the stat entry for
+                    # generic paper, but the game lets *any* item with that stat be used.
+                    # We resolve to the display name of the first matching template we find,
+                    # which may not match what players usually call the ingredient.  Listing
+                    # every possible template per stat entry is out of scope here.
+                    template_data = game.templates_by_stats.get(obj_id)
+                    loc_name = game.resolve_display_name(obj_id, template_data=template_data)
+                    if loc_name:
+                        display_name = loc_name
+                elif obj_type == "Category":
+                    preview = game.combo_previews.get(obj_id, {})
+                    tooltip = preview.get("Tooltip")
+                    if tooltip:
+                        display_name = tooltip
 
             ingredients.append({
                 "id": obj_id,
@@ -82,8 +102,11 @@ def build_recipe_lua(item_combos, game):
             if not res_id:
                 break
             res_template = game.templates_by_stats.get(res_id)
-            res_name = (game.resolve_display_name(res_id, template_data=res_template)
-                        or res_id)
+            res_name = (
+                NAME_OVERRIDES.get(res_id)
+                or game.resolve_display_name(res_id, template_data=res_template)
+                or res_id
+            )
             result_items.append({"id": res_id, "name": res_name})
 
         lua_lines.append(f'    ["{combo_id}"] = {{')

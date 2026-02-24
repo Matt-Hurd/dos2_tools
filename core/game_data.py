@@ -307,6 +307,9 @@ class GameData:
         Tries in order:
           1. Template DisplayName handle
           2. Item progression name group  (skips |..| stubs)
+          2b. Item progression visual group → RootTemplate DisplayName
+              (covers items present in ItemProgressionVisuals but absent
+               from ItemProgressionNames, e.g. ARM_SETS_CasanovaPants)
           3. Item progression LSJ ExtraData  (skips |..| stubs)
           4. Stats ID as-is (fallback)
         """
@@ -328,15 +331,31 @@ class GameData:
 
             if item_group and item_group in self.item_prog_names:
                 raw_name = self.item_prog_names[item_group].get("name")
-                # Skip |..| internal placeholder names
+                # The "name" field in ItemProgressionNames.txt stores the
+                # literal display name string (e.g. "The Devourer's Claws"),
+                # not a UUID reference.  Return it directly unless it is a
+                # |..| internal placeholder.
                 if raw_name and not (raw_name.startswith("|") and raw_name.endswith("|")):
-                    for key_raw in self.item_prog_keys:
-                        key = LSJNode(key_raw)
-                        if key.get_value("UUID") == raw_name:
-                            handle = key.get_handle("Content")
-                            text = loc.get_handle_text(handle)
-                            if text:
-                                return text
+                    return raw_name
+
+            # Pattern 2b: ItemProgressionVisuals → RootTemplate → DisplayName
+            # Some items (e.g. armor-set pieces like ARM_SETS_CasanovaPants) have
+            # an itemgroup entry in ItemProgressionVisuals but no corresponding
+            # namegroup in ItemProgressionNames.  The visual group records a
+            # rootgroup UUID we can look up in templates_by_mapkey to find the
+            # DisplayName localization handle.
+            visual_key = item_group if item_group else stats_id
+            visual_group = self.item_prog_visuals.get(visual_key)
+            if visual_group:
+                root_uuid = visual_group.get("rootgroup")
+                if root_uuid:
+                    rt = self.templates_by_mapkey.get(root_uuid, {})
+                    td2 = LSJNode(rt)
+                    handle2 = td2.get_handle("DisplayName")
+                    if handle2:
+                        text = loc.get_handle_text(handle2)
+                        if text:
+                            return text
 
             # Pattern 3: LSJ ExtraData
             for key_raw in self.item_prog_keys:
