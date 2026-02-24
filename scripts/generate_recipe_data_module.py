@@ -1,0 +1,145 @@
+"""
+Generate the Module_RecipeData.lua Lua module for the DOS2 wiki.
+
+Thin CLI using GameData(). Exports all crafting recipes (from ItemCombos)
+as a Lua table, preserving ingredient requirements, result items, and
+recipe metadata.
+
+Usage:
+    python3 -m dos2_tools.scripts.generate_recipe_data_module
+    python3 -m dos2_tools.scripts.generate_recipe_data_module --out Module_RecipeData.lua
+"""
+
+import argparse
+
+from dos2_tools.core.game_data import GameData
+
+
+def escape_lua_string(s):
+    if not s:
+        return "nil"
+    clean = s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+    return f'"{clean}"'
+
+
+def build_recipe_lua(item_combos, game):
+    """
+    Build Lua lines matching the old RecipeData.lua format exactly.
+
+    Output format per entry:
+        ["combo_id"] = {
+            station = "...",          -- optional
+            ingredients = {
+                { id = "...", type = "...", name = "...", transform = "..." },
+            },
+            results = {
+                { id = "...", name = "..." },
+            }
+        },
+    """
+    lua_lines = []
+    lua_lines.append("return {")
+
+    for combo_id, combo_data in sorted(item_combos.items()):
+        data = combo_data.get("Data", {})
+        results = combo_data.get("Results", {})
+
+        station = data.get("CraftingStation", "")
+
+        # Collect ingredients from numbered Object/Type/Transform keys
+        ingredients = []
+        for i in range(1, 6):
+            obj_id = data.get(f"Object {i}")
+            if not obj_id:
+                break
+            obj_type = data.get(f"Type {i}", "")
+            transform = data.get(f"Transform {i}", "")
+
+            # Resolve display name by ingredient type
+            display_name = obj_id
+            if obj_type == "Object":
+                template_data = game.templates_by_stats.get(obj_id)
+                loc_name = game.resolve_display_name(obj_id, template_data=template_data)
+                if loc_name:
+                    display_name = loc_name
+            elif obj_type == "Category":
+                preview = game.combo_previews.get(obj_id, {})
+                tooltip = preview.get("Tooltip")
+                if tooltip:
+                    display_name = tooltip
+
+            ingredients.append({
+                "id": obj_id,
+                "type": obj_type,
+                "transform": transform,
+                "name": display_name,
+            })
+
+        # Collect results from numbered Result keys
+        result_items = []
+        for i in range(1, 6):
+            res_id = results.get(f"Result {i}")
+            if not res_id:
+                break
+            res_template = game.templates_by_stats.get(res_id)
+            res_name = (game.resolve_display_name(res_id, template_data=res_template)
+                        or res_id)
+            result_items.append({"id": res_id, "name": res_name})
+
+        lua_lines.append(f'    ["{combo_id}"] = {{')
+
+        if station:
+            lua_lines.append(f'        station = {escape_lua_string(station)},')
+
+        lua_lines.append('        ingredients = {')
+        for ing in ingredients:
+            lua_lines.append(
+                f'            {{ id = {escape_lua_string(ing["id"])}, '
+                f'type = {escape_lua_string(ing["type"])}, '
+                f'name = {escape_lua_string(ing["name"])}, '
+                f'transform = {escape_lua_string(ing["transform"])} }},'
+            )
+        lua_lines.append('        },')
+
+        lua_lines.append('        results = {')
+        for res in result_items:
+            lua_lines.append(
+                f'            {{ id = {escape_lua_string(res["id"])}, '
+                f'name = {escape_lua_string(res["name"])} }},'
+            )
+        lua_lines.append('        }')
+
+        lua_lines.append('    },')
+
+    lua_lines.append("}")
+    return "\n".join(lua_lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate Module_RecipeData.lua for the DOS2 wiki"
+    )
+    parser.add_argument(
+        "--out", default="Module_RecipeData.lua",
+        help="Output Lua file path"
+    )
+    parser.add_argument(
+        "--refresh-loc", action="store_true",
+        help="Force rebuild of localization cache"
+    )
+    args = parser.parse_args()
+
+    game = GameData(refresh_loc=args.refresh_loc)
+
+    print(f"  Loaded {len(game.item_combos)} crafting recipes.")
+
+    final_lua = build_recipe_lua(game.item_combos, game)
+
+    with open(args.out, "w", encoding="utf-8") as f:
+        f.write(final_lua)
+
+    print(f"Generated {args.out}")
+
+
+if __name__ == "__main__":
+    main()

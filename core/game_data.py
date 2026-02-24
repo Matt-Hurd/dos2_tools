@@ -37,6 +37,7 @@ from dos2_tools.core.data_models import FileEntry, LSJNode
 
 
 class GameData:
+
     """
     Central loader for all DOS2 game data.
 
@@ -161,6 +162,7 @@ class GameData:
 
         print(f"  Loaded {len(self._templates_by_stats)} templates by stats, "
               f"{len(self._templates_by_mapkey)} by mapkey.")
+
 
     # ─── Localization ───────────────────────────────────────────────────
 
@@ -304,8 +306,8 @@ class GameData:
 
         Tries in order:
           1. Template DisplayName handle
-          2. Item progression name group
-          3. Item progression LSJ ExtraData
+          2. Item progression name group  (skips |..| stubs)
+          3. Item progression LSJ ExtraData  (skips |..| stubs)
           4. Stats ID as-is (fallback)
         """
         loc = self.localization
@@ -326,7 +328,8 @@ class GameData:
 
             if item_group and item_group in self.item_prog_names:
                 raw_name = self.item_prog_names[item_group].get("name")
-                if raw_name:
+                # Skip |..| internal placeholder names
+                if raw_name and not (raw_name.startswith("|") and raw_name.endswith("|")):
                     for key_raw in self.item_prog_keys:
                         key = LSJNode(key_raw)
                         if key.get_value("UUID") == raw_name:
@@ -339,6 +342,10 @@ class GameData:
             for key_raw in self.item_prog_keys:
                 key = LSJNode(key_raw)
                 if key.get_value("ExtraData") == stats_id:
+                    # Skip stub entries whose UUID is a |..| placeholder
+                    uuid_val = key.get_value("UUID") or ""
+                    if uuid_val.startswith("|") and uuid_val.endswith("|"):
+                        continue
                     handle = key.get_handle("Content")
                     text = loc.get_handle_text(handle)
                     if text:
@@ -351,3 +358,4 @@ class GameData:
                 return text
 
         return None
+
