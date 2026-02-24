@@ -10,37 +10,11 @@ Usage:
     python3 -m dos2_tools.scripts.generate_armour_module --out Module_ArmourData.lua
 """
 
-import re
 import argparse
-from collections import OrderedDict
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.formatters import to_lua_table
-
-
-def convert_type(value):
-    """Convert string values to appropriate Python types."""
-    if not isinstance(value, str):
-        return value
-
-    if re.match(r"^-?\d+$", value):
-        return int(value)
-
-    val_lower = value.lower()
-    if val_lower in ("true", "yes"):
-        return True
-    if val_lower in ("false", "no"):
-        return False
-
-    try:
-        return float(value)
-    except ValueError:
-        pass
-
-    if value.startswith('"') and value.endswith('"') and len(value) > 1:
-        return value[1:-1].replace('\\"', '"')
-
-    return value.replace('"', '\\"')
+from dos2_tools.core.formatters import convert_type, to_lua_table  # noqa: F401 (convert_type re-exported for tests)
+from dos2_tools.core.stats_helpers import build_typed_stat_dict, resolve_boosts_inline
 
 
 def main():
@@ -68,62 +42,10 @@ def main():
 
     print(f"  Found {len(armor_shield_stats)} armor/shield entries.")
 
-    # Convert types
-    typed_data = {}
-    for entry_id, data in armor_shield_stats.items():
-        typed_entry = OrderedDict()
-        for key, value in data.items():
-            if key.startswith("_") and key != "_type":
-                continue
-            typed_entry[key] = convert_type(value)
-        typed_data[entry_id] = typed_entry
+    typed_data = build_typed_stat_dict(armor_shield_stats)
+    resolve_boosts_inline(typed_data)
 
-    # Resolve Boosts linking
-    for entry_id, data in typed_data.items():
-        if "Boosts" in data and isinstance(data["Boosts"], str):
-            boost_keys = [k.strip() for k in data["Boosts"].split(";") if k.strip()]
-            resolved_boosts = []
-            for boost_key in boost_keys:
-                if boost_key in typed_data:
-                    resolved_boosts.append(typed_data[boost_key])
-            data["Boosts"] = resolved_boosts
-
-    # Use the canonical Lua serializer from formatters if available,
-    # otherwise fall back to inline implementation
-    try:
-        lua_str = to_lua_table(typed_data)
-    except (ImportError, AttributeError):
-        # Inline Lua serializer fallback
-        def lua_value(val, depth=1):
-            indent = "\t" * depth
-            inner = "\t" * (depth + 1)
-            if isinstance(val, bool):
-                return str(val).lower()
-            if isinstance(val, (int, float)):
-                return str(val)
-            if isinstance(val, str):
-                escaped = val.replace("\\", "\\\\").replace('"', '\\"')
-                return f'"{escaped}"'
-            if isinstance(val, dict):
-                if not val:
-                    return "{}"
-                parts = []
-                for k, v in val.items():
-                    lua_k = f'["{k}"]' if not re.match(r"^[a-zA-Z_]\w*$", str(k)) else str(k)
-                    parts.append(f"{inner}{lua_k} = {lua_value(v, depth + 1)},")
-                return "{\n" + "\n".join(parts) + "\n" + indent + "}"
-            if isinstance(val, list):
-                if not val:
-                    return "{}"
-                parts = [f"{inner}{lua_value(v, depth + 1)}," for v in val]
-                return "{\n" + "\n".join(parts) + "\n" + indent + "}"
-            if val is None:
-                return "nil"
-            return f'"{val}"'
-
-        lua_str = lua_value(typed_data, depth=0)
-
-    final_lua = "return " + lua_str
+    final_lua = "return " + to_lua_table(typed_data)
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(final_lua)

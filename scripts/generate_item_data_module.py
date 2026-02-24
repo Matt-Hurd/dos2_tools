@@ -11,40 +11,14 @@ Usage:
     python3 -m dos2_tools.scripts.generate_item_data_module --types Object Potion
 """
 
-import re
 import argparse
-from collections import OrderedDict
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.formatters import to_lua_table
+from dos2_tools.core.formatters import convert_type, to_lua_table  # noqa: F401 (convert_type re-exported for tests)
+from dos2_tools.core.stats_helpers import build_typed_stat_dict, resolve_boosts_inline
 
 # Default types to include
 DEFAULT_TYPES = {"Object", "Potion"}
-
-
-def convert_type(value):
-    """Convert string values to appropriate Python types."""
-    if not isinstance(value, str):
-        return value
-
-    if re.match(r"^-?\d+$", value):
-        return int(value)
-
-    val_lower = value.lower()
-    if val_lower in ("true", "yes"):
-        return True
-    if val_lower in ("false", "no"):
-        return False
-
-    try:
-        return float(value)
-    except ValueError:
-        pass
-
-    if value.startswith('"') and value.endswith('"') and len(value) > 1:
-        return value[1:-1].replace('\\"', '"')
-
-    return value.replace('"', '\\"')
 
 
 def main():
@@ -78,25 +52,8 @@ def main():
 
     print(f"  Found {len(item_stats)} item entries (types: {sorted(include_types)}).")
 
-    # Convert types
-    typed_data = {}
-    for entry_id, data in item_stats.items():
-        typed_entry = OrderedDict()
-        for key, value in data.items():
-            if key.startswith("_") and key != "_type":
-                continue
-            typed_entry[key] = convert_type(value)
-        typed_data[entry_id] = typed_entry
-
-    # Resolve Boosts linking
-    for entry_id, data in typed_data.items():
-        if "Boosts" in data and isinstance(data["Boosts"], str):
-            boost_keys = [k.strip() for k in data["Boosts"].split(";") if k.strip()]
-            resolved_boosts = []
-            for boost_key in boost_keys:
-                if boost_key in typed_data:
-                    resolved_boosts.append(typed_data[boost_key])
-            data["Boosts"] = resolved_boosts
+    typed_data = build_typed_stat_dict(item_stats)
+    resolve_boosts_inline(typed_data)
 
     lua_str = to_lua_table(typed_data)
     final_lua = "return " + lua_str

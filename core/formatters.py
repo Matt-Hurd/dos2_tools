@@ -66,6 +66,22 @@ def convert_type(value):
     return value.replace('"', '\\"')
 
 
+# ─── Lua String Escaping ────────────────────────────────────────────────────
+
+def escape_lua_string(s):
+    """
+    Escape a value for embedding in a Lua string literal (double-quoted).
+
+    Returns the Lua token ``nil`` for falsy values (None or empty string),
+    otherwise returns the escaped string wrapped in double quotes.
+    Used when building hand-rolled Lua modules such as RecipeData.lua.
+    """
+    if not s:
+        return "nil"
+    clean = s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+    return f'"{clean}"'
+
+
 # ─── Lua Serialization ─────────────────────────────────────────────────────
 
 def sanitize_lua_string(text):

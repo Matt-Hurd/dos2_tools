@@ -13,13 +13,9 @@ Usage:
 import argparse
 
 from dos2_tools.core.game_data import GameData
+from dos2_tools.core.formatters import escape_lua_string  # noqa: F401 (re-exported for tests)
 
 
-def escape_lua_string(s):
-    if not s:
-        return "nil"
-    clean = s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-    return f'"{clean}"'
 
 
 # Hardcoded display-name overrides for stats IDs where the data-driven lookup

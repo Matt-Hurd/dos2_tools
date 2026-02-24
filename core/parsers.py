@@ -19,6 +19,26 @@ from dos2_tools.core.config import GIFTBAG_MAP
 from dos2_tools.core.data_models import LSJNode
 
 
+# ─── File-Path Helpers ───────────────────────────────────────────────────────
+
+def get_region_name(file_path):
+    """
+    Derive the game region name from a level or globals file path.
+
+    Looks for the component after "Levels" or "Globals" in the path.
+    Returns "Unknown" if neither sentinel is found.
+
+    Used by scripts that scan level files and need to tag objects with
+    their region (e.g. FJ_FortJoy_Main, RC_Main).
+    """
+    parts = file_path.replace("\\", "/").split("/")
+    if "Levels" in parts:
+        return parts[parts.index("Levels") + 1]
+    if "Globals" in parts:
+        return parts[parts.index("Globals") + 1]
+    return "Unknown"
+
+
 # ─── Stats (.txt) Parsing ───────────────────────────────────────────────────
 
 def parse_stats_txt(filepath):

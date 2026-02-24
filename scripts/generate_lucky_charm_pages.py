@@ -16,16 +16,9 @@ import argparse
 from collections import defaultdict
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.parsers import parse_lsj_templates
+from dos2_tools.core.parsers import parse_lsj_templates, get_region_name
 
 
-def get_region_name(file_path):
-    parts = file_path.replace("\\", "/").split("/")
-    if "Levels" in parts:
-        return parts[parts.index("Levels") + 1]
-    if "Globals" in parts:
-        return parts[parts.index("Globals") + 1]
-    return "Unknown"
 
 
 def is_openable_container(node_data):

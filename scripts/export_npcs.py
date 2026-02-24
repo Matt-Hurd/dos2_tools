@@ -19,7 +19,8 @@ from copy import deepcopy
 
 from dos2_tools.core.game_data import GameData
 from dos2_tools.core.formatters import sanitize_filename
-from dos2_tools.core.parsers import parse_lsj_templates
+from dos2_tools.core.parsers import parse_lsj_templates, get_region_name
+
 
 
 # NPC stat fields rendered in the wiki infobox
@@ -157,14 +158,6 @@ def parse_inventory_items(item_list_root, templates_by_mapkey, loc):
                 items_found.append((name, amount))
     return items_found
 
-
-def get_region_name(file_path):
-    parts = file_path.replace("\\", "/").split("/")
-    if "Levels" in parts:
-        return parts[parts.index("Levels") + 1]
-    if "Globals" in parts:
-        return parts[parts.index("Globals") + 1]
-    return "Unknown"
 
 
 def get_variant_signature(data):

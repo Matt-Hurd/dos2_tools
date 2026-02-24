@@ -13,14 +13,9 @@ Usage:
 import argparse
 
 from dos2_tools.core.game_data import GameData
+from dos2_tools.core.formatters import escape_lua_string
 
 
-def escape_lua_string(s):
-    """Escape a string value for Lua."""
-    if not s:
-        return "nil"
-    clean = s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
-    return f'"{clean}"'
 
 
 def main():

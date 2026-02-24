@@ -13,37 +13,11 @@ Usage:
     python3 -m dos2_tools.scripts.generate_skill_data_module --out Module_SkillData.lua
 """
 
-import re
 import argparse
-from collections import OrderedDict
 
 from dos2_tools.core.game_data import GameData
-from dos2_tools.core.formatters import to_lua_table
-
-
-def convert_type(value):
-    """Convert string values to appropriate Python types."""
-    if not isinstance(value, str):
-        return value
-
-    if re.match(r"^-?\d+$", value):
-        return int(value)
-
-    val_lower = value.lower()
-    if val_lower in ("true", "yes"):
-        return True
-    if val_lower in ("false", "no"):
-        return False
-
-    try:
-        return float(value)
-    except ValueError:
-        pass
-
-    if value.startswith('"') and value.endswith('"') and len(value) > 1:
-        return value[1:-1].replace('\\"', '"')
-
-    return value.replace('"', '\\"')
+from dos2_tools.core.formatters import convert_type, to_lua_table  # noqa: F401 (convert_type re-exported for tests)
+from dos2_tools.core.stats_helpers import build_typed_stat_dict
 
 
 def main():
@@ -75,15 +49,8 @@ def main():
     skill_types = sorted({v["_type"] for v in skill_stats.values()})
     print(f"  Skill types: {skill_types}")
 
-    # Convert types (no Boosts resolution needed for skills)
-    typed_data = {}
-    for entry_id, data in skill_stats.items():
-        typed_entry = OrderedDict()
-        for key, value in data.items():
-            if key.startswith("_") and key != "_type":
-                continue
-            typed_entry[key] = convert_type(value)
-        typed_data[entry_id] = typed_entry
+    # No Boosts resolution needed for skills
+    typed_data = build_typed_stat_dict(skill_stats)
 
     lua_str = to_lua_table(typed_data)
     final_lua = "return " + lua_str
