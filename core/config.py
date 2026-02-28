@@ -141,6 +141,9 @@ FILE_PATTERNS = {
     "treasure_tables": [
         "Public/**/Stats/Generated/TreasureTable.txt",
     ],
+    "dialogue_files": [
+        "Mods/**/Story/Dialogs/**/*.lsj",
+    ],
 }
 
 # Valid game levels (excluding test/dev/arena levels)
